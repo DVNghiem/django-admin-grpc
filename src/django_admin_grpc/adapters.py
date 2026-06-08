@@ -13,11 +13,11 @@ from typing import TYPE_CHECKING, Any, cast
 
 import grpc
 
-from django_grpc_admin.exceptions import map_grpc_error
-from django_grpc_admin.paginator import PagedResult
+from django_admin_grpc.exceptions import map_grpc_error
+from django_admin_grpc.paginator import PagedResult
 
 if TYPE_CHECKING:
-    from django_grpc_admin.resources import BaseGrpcResource
+    from django_admin_grpc.resources import BaseGrpcResource
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +126,7 @@ class BaseGrpcServiceAdapter(ABC):
         Must be called **inside** the ``if self._channel is None:`` guard in
         concrete adapters so the channel is not double-wrapped.
         """
-        from django_grpc_admin.interceptors import TraceClientInterceptor
+        from django_admin_grpc.interceptors import TraceClientInterceptor
 
         provider = self._trace_context_provider()
         return grpc.intercept_channel(
@@ -135,7 +135,7 @@ class BaseGrpcServiceAdapter(ABC):
 
     def _trace_context_provider(self) -> Callable[[], dict[str, str]]:
         """Return the configured trace-context callable, or a no-op."""
-        from django_grpc_admin.settings import get_setting
+        from django_admin_grpc.settings import get_setting
 
         provider = get_setting("GRPC_ADMIN_TRACE_CONTEXT_PROVIDER")
         if provider is None:

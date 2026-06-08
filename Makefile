@@ -19,7 +19,7 @@ test:
 
 lint:
 	ruff check src tests
-	mypy src/django_grpc_admin
+	mypy src/django_admin_grpc
 
 format:
 	ruff format src tests

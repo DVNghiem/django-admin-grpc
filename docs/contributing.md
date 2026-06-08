@@ -36,7 +36,7 @@ Thank you for your interest in improving django-grpc-admin! This page covers how
 
 ```
 django-grpc-admin/
-├── src/django_grpc_admin/     # Package source code
+├── src/django_admin_grpc/     # Package source code
 │   ├── __init__.py
 │   ├── admin.py                # GrpcResourceAdmin, GrpcChangeList
 │   ├── adapters.py             # BaseGrpcServiceAdapter
@@ -67,7 +67,7 @@ django-grpc-admin/
 pytest
 
 # Run with coverage
-pytest --cov=django_grpc_admin --cov-report=term-missing
+pytest --cov=django_admin_grpc --cov-report=term-missing
 
 # Run a specific test file
 pytest tests/test_resources.py
@@ -88,7 +88,7 @@ ruff check src tests
 ruff format src tests
 
 # Type check
-mypy src/django_grpc_admin
+mypy src/django_admin_grpc
 ```
 
 Configuration is in `pyproject.toml`:
@@ -109,7 +109,7 @@ Configuration is in `pyproject.toml`:
 
 ```python
 import pytest
-from django_grpc_admin.resources import BaseGrpcResource, CharFieldConfig
+from django_admin_grpc.resources import BaseGrpcResource, CharFieldConfig
 
 class Product(BaseGrpcResource):
     class Meta:
@@ -147,7 +147,7 @@ def test_admin_model_has_meta():
    ```bash
    pytest
    ruff check src tests
-   mypy src/django_grpc_admin
+   mypy src/django_admin_grpc
    ```
 
 4. **Commit with a clear message:**

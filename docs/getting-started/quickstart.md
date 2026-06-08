@@ -22,14 +22,14 @@ cd myproject
 python manage.py startapp catalog
 ```
 
-Add `catalog` and `django_grpc_admin` to `INSTALLED_APPS`.
+Add `catalog` and `django_admin_grpc` to `INSTALLED_APPS`.
 
 ## Step 2: Define the resource
 
 Create `catalog/resources.py`:
 
 ```python
-from django_grpc_admin.resources import (
+from django_admin_grpc.resources import (
     BaseGrpcResource,
     BooleanFieldConfig,
     CharFieldConfig,
@@ -64,8 +64,8 @@ The `BaseGrpcResource` subclass declares what fields exist, their types, and whi
 Create `catalog/adapters.py`:
 
 ```python
-from django_grpc_admin.adapters import BaseGrpcServiceAdapter
-from django_grpc_admin.paginator import PagedResult
+from django_admin_grpc.adapters import BaseGrpcServiceAdapter
+from django_admin_grpc.paginator import PagedResult
 
 class CatalogAdapter(BaseGrpcServiceAdapter):
     service_name = "catalog"
@@ -106,7 +106,7 @@ Create `catalog/admin.py`:
 
 ```python
 from django.contrib import admin
-from django_grpc_admin.admin import GrpcResourceAdmin
+from django_admin_grpc.admin import GrpcResourceAdmin
 
 from .resources import Product
 from .adapters import CatalogAdapter

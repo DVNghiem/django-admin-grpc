@@ -10,7 +10,7 @@ Subclass `BaseGrpcResource` and define:
 - `fields` — a list of field config objects
 
 ```python
-from django_grpc_admin.resources import (
+from django_admin_grpc.resources import (
     BaseGrpcResource,
     BooleanFieldConfig,
     CharFieldConfig,
@@ -53,7 +53,7 @@ class Product(BaseGrpcResource):
 Field config classes are dataclasses that hold metadata for a single field. All share a common base (`BaseFieldConfig`) and add type-specific attributes.
 
 ```python
-from django_grpc_admin.resources import FKFieldConfig
+from django_admin_grpc.resources import FKFieldConfig
 
 FKFieldConfig(
     name="category_id",
@@ -203,7 +203,7 @@ Returns `str(self.pk)` by default. Override if you want a different string repre
 ### Foreign Key to a Django Model
 
 ```python
-from django_grpc_admin.resources import CharFieldConfig, FKFieldConfig
+from django_admin_grpc.resources import CharFieldConfig, FKFieldConfig
 
 class Order(BaseGrpcResource):
     class Meta:
@@ -225,7 +225,7 @@ class Order(BaseGrpcResource):
 ### Foreign Key to Another gRPC Service
 
 ```python
-from django_grpc_admin.resources import CharFieldConfig, FKFieldConfig
+from django_admin_grpc.resources import CharFieldConfig, FKFieldConfig
 
 class Product(BaseGrpcResource):
     class Meta:
@@ -250,7 +250,7 @@ class Product(BaseGrpcResource):
 When the gRPC response uses different field names than your resource:
 
 ```python
-from django_grpc_admin.resources import CharFieldConfig, FloatFieldConfig
+from django_admin_grpc.resources import CharFieldConfig, FloatFieldConfig
 
 class Product(BaseGrpcResource):
     fields = [
@@ -263,7 +263,7 @@ class Product(BaseGrpcResource):
 ### Choices Field
 
 ```python
-from django_grpc_admin.resources import CharFieldConfig, ChoicesFieldConfig
+from django_admin_grpc.resources import CharFieldConfig, ChoicesFieldConfig
 
 class Product(BaseGrpcResource):
     fields = [

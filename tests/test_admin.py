@@ -1,5 +1,5 @@
 """
-Tests for django_grpc_admin.admin module.
+Tests for django_admin_grpc.admin module.
 """
 from unittest.mock import Mock, patch
 
@@ -7,10 +7,10 @@ import pytest
 from django.contrib.admin.sites import AdminSite
 from django.test import RequestFactory
 
-from django_grpc_admin.adapters import BaseGrpcServiceAdapter
-from django_grpc_admin.admin import GrpcChangeList, GrpcResourceAdmin
-from django_grpc_admin.paginator import PagedResult
-from django_grpc_admin.resources import (
+from django_admin_grpc.adapters import BaseGrpcServiceAdapter
+from django_admin_grpc.admin import GrpcChangeList, GrpcResourceAdmin
+from django_admin_grpc.paginator import PagedResult
+from django_admin_grpc.resources import (
     BaseGrpcResource,
     BooleanFieldConfig,
     CharFieldConfig,
@@ -542,7 +542,7 @@ class TestGrpcResourceAdminDeleteSelected:
         qs = Mock()
         qs._selected_pks = ["1", "2"]
 
-        with patch("django_grpc_admin.admin.messages.success") as mock_success:
+        with patch("django_admin_grpc.admin.messages.success") as mock_success:
             admin_instance._grpc_delete_selected(request, qs)
         mock_success.assert_called_once()
 
@@ -556,7 +556,7 @@ class TestGrpcResourceAdminDeleteSelected:
         qs = Mock()
         qs._selected_pks = ["1"]
 
-        with patch("django_grpc_admin.admin.messages.error") as mock_error:
+        with patch("django_admin_grpc.admin.messages.error") as mock_error:
             admin._grpc_delete_selected(request, qs)
         mock_error.assert_called_once_with(request, "gRPC adapter not available.")
 
@@ -575,7 +575,7 @@ class TestGrpcResourceAdminDeleteSelected:
         qs = Mock()
         qs._selected_pks = ["1"]
 
-        with patch("django_grpc_admin.admin.messages.error") as mock_error:
+        with patch("django_admin_grpc.admin.messages.error") as mock_error:
             admin_instance._grpc_delete_selected(request, qs)
         mock_error.assert_called_once()
 
@@ -670,10 +670,10 @@ class TestGrpcResourceAdminWithBase:
 
 class TestGrpcResourceAdminTemplateResolution:
     def test_change_form_template_default(self, admin_instance):
-        assert admin_instance._get_change_form_template() == "django_grpc_admin/change_form.html"
+        assert admin_instance._get_change_form_template() == "django_admin_grpc/change_form.html"
 
     def test_delete_confirm_template_default(self, admin_instance):
-        assert admin_instance._get_delete_confirm_template() == "django_grpc_admin/delete_confirm.html"
+        assert admin_instance._get_delete_confirm_template() == "django_admin_grpc/delete_confirm.html"
 
     def test_change_form_template_from_resource_meta(self):
         class TemplResource(BaseGrpcResource):

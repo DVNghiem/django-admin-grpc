@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from django_grpc_admin.resources import BaseGrpcResource
+    from django_admin_grpc.resources import BaseGrpcResource
 
 logger = logging.getLogger(__name__)
 

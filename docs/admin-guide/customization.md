@@ -6,7 +6,7 @@ Override widgets per field when building the form class:
 
 ```python
 from django import forms
-from django_grpc_admin.admin import GrpcResourceAdmin
+from django_admin_grpc.admin import GrpcResourceAdmin
 
 class ProductAdmin(GrpcResourceAdmin):
     resource_class = Product
@@ -40,7 +40,7 @@ GRPC_ADMIN = {
 
 ```python
 from django.contrib import admin
-from django_grpc_admin.admin import GrpcResourceAdmin
+from django_admin_grpc.admin import GrpcResourceAdmin
 from unfold.admin import ModelAdmin as UnfoldModelAdmin
 
 class MyGrpcAdmin(GrpcResourceAdmin, UnfoldModelAdmin):
@@ -96,14 +96,14 @@ For change form templates, the admin looks in this order:
 1. `grpc_add_form_template` attribute on the admin class (for add view only)
 2. Resource `Meta.change_form_template`
 3. `GRPC_ADMIN['DEFAULT_CHANGE_FORM_TEMPLATE']`
-4. Package default: `django_grpc_admin/change_form.html`
+4. Package default: `django_admin_grpc/change_form.html`
 
 For delete confirmation:
 
 1. `grpc_delete_template` attribute on the admin class
 2. Resource `Meta.delete_confirm_template`
 3. `GRPC_ADMIN['DEFAULT_DELETE_CONFIRM_TEMPLATE']`
-4. Package default: `django_grpc_admin/delete_confirm.html`
+4. Package default: `django_admin_grpc/delete_confirm.html`
 
 ## Custom Detail Sections
 

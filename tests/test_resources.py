@@ -1,9 +1,9 @@
 """
-Tests for django_grpc_admin.resources module.
+Tests for django_admin_grpc.resources module.
 """
 from django import forms
 
-from django_grpc_admin.resources import (
+from django_admin_grpc.resources import (
     BaseGrpcResource,
     BooleanFieldConfig,
     CharFieldConfig,

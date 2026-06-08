@@ -10,8 +10,8 @@ import logging
 import uuid
 from typing import Any
 
-from django_grpc_admin.adapters import BaseGrpcServiceAdapter
-from django_grpc_admin.paginator import PagedResult
+from django_admin_grpc.adapters import BaseGrpcServiceAdapter
+from django_admin_grpc.paginator import PagedResult
 
 from .resources import CategoryResource, ProductResource
 

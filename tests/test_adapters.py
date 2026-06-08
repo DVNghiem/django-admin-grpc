@@ -1,13 +1,13 @@
 """
-Tests for django_grpc_admin.adapters module.
+Tests for django_admin_grpc.adapters module.
 """
 from unittest.mock import Mock, patch
 
 import grpc
 import pytest
 
-from django_grpc_admin.adapters import BaseGrpcServiceAdapter
-from django_grpc_admin.paginator import PagedResult
+from django_admin_grpc.adapters import BaseGrpcServiceAdapter
+from django_admin_grpc.paginator import PagedResult
 
 
 class MinimalAdapter(BaseGrpcServiceAdapter):
@@ -127,7 +127,7 @@ class TestBaseGrpcServiceAdapterHelpers:
         adapter = MinimalAdapter()
         mock_channel = Mock(spec=grpc.Channel)
 
-        with patch("django_grpc_admin.adapters.grpc.intercept_channel") as mock_intercept:
+        with patch("django_admin_grpc.adapters.grpc.intercept_channel") as mock_intercept:
             mock_intercept.return_value = Mock(spec=grpc.Channel)
             with patch.object(
                 adapter, "_trace_context_provider", return_value=lambda: {}
@@ -139,7 +139,7 @@ class TestBaseGrpcServiceAdapterHelpers:
     def test_trace_context_provider_none(self):
         adapter = MinimalAdapter()
         with patch(
-            "django_grpc_admin.settings.get_setting", return_value=None
+            "django_admin_grpc.settings.get_setting", return_value=None
         ):
             provider = adapter._trace_context_provider()
             assert provider() == {}
@@ -148,7 +148,7 @@ class TestBaseGrpcServiceAdapterHelpers:
         adapter = MinimalAdapter()
         fn = lambda: {"x-trace-id": "abc"}  # noqa: E731
         with patch(
-            "django_grpc_admin.settings.get_setting", return_value=fn
+            "django_admin_grpc.settings.get_setting", return_value=fn
         ):
             provider = adapter._trace_context_provider()
             assert provider is fn
@@ -156,7 +156,7 @@ class TestBaseGrpcServiceAdapterHelpers:
     def test_trace_context_provider_dotted_path(self):
         adapter = MinimalAdapter()
         with patch(
-            "django_grpc_admin.settings.get_setting",
+            "django_admin_grpc.settings.get_setting",
             return_value="tests.test_adapters.dummy_provider",
         ), patch(
             "django.utils.module_loading.import_string",

@@ -11,7 +11,7 @@ from django.apps import apps
 from django.core.exceptions import FieldDoesNotExist
 
 if TYPE_CHECKING:
-    from django_grpc_admin.resources import BaseGrpcResource
+    from django_admin_grpc.resources import BaseGrpcResource
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +128,7 @@ class FakeModelMeta:
     def _build_field(self, name: str, config: Any | None) -> Any:
         from django.db import models as django_models
 
-        from django_grpc_admin.resources import BooleanFieldConfig
+        from django_admin_grpc.resources import BooleanFieldConfig
 
         if config and isinstance(config, BooleanFieldConfig):
             bf = django_models.BooleanField(

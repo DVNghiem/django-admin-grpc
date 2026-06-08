@@ -26,7 +26,7 @@ def get_widget_for_field_type(field_type: str) -> type[forms.Widget]:
 
 def get_default_widgets() -> dict[str, type[forms.Widget]]:
     """Return the default widget mapping. Can be overridden via GRPC_ADMIN['DEFAULT_WIDGETS'] setting."""
-    from django_grpc_admin.settings import get_setting
+    from django_admin_grpc.settings import get_setting
 
     custom = get_setting("DEFAULT_WIDGETS")
     if custom:

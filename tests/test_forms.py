@@ -1,13 +1,13 @@
 """
-Tests for django_grpc_admin.forms module.
+Tests for django_admin_grpc.forms module.
 """
 from unittest.mock import Mock, patch
 
 import pytest
 from django import forms
 
-from django_grpc_admin.forms import FormBuilder, GrpcAdminForm, ModelPKChoiceField
-from django_grpc_admin.resources import (
+from django_admin_grpc.forms import FormBuilder, GrpcAdminForm, ModelPKChoiceField
+from django_admin_grpc.resources import (
     BaseGrpcResource,
     BooleanFieldConfig,
     CharFieldConfig,
@@ -159,7 +159,7 @@ class TestFormBuilderDefaultWidgets:
         }
 
         with patch(
-            "django_grpc_admin.widgets.get_default_widgets",
+            "django_admin_grpc.widgets.get_default_widgets",
             return_value=custom_widgets,
         ):
             form_class = FormBuilder.build(TestResource)

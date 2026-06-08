@@ -95,7 +95,7 @@ grpc_filter_config = {
 For complex filtering logic, subclass `GrpcSimpleListFilter` (modelled on Django's `SimpleListFilter`):
 
 ```python
-from django_grpc_admin.filters import GrpcSimpleListFilter
+from django_admin_grpc.filters import GrpcSimpleListFilter
 
 class PriceRangeFilter(GrpcSimpleListFilter):
     title = "Price Range"
@@ -167,7 +167,7 @@ Set `grpc_filter_config = None` or omit `list_filter` to disable sidebar filters
 The built-in filters use Django Admin's default templates. If you use a custom admin theme (e.g. django-unfold), you can subclass the filter classes and set a custom `template`:
 
 ```python
-from django_grpc_admin.filters import GrpcTextInputFilter
+from django_admin_grpc.filters import GrpcTextInputFilter
 
 class UnfoldTextFilter(GrpcTextInputFilter):
     template = "unfold/filters/filters_field.html"

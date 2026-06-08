@@ -20,12 +20,12 @@ from django.http import HttpRequest, HttpResponseRedirect
 from django.template.response import TemplateResponse
 from django.urls import reverse
 
-from django_grpc_admin.models import GrpcFakeQuerySet, ModelWrapper
-from django_grpc_admin.paginator import GrpcPaginator, PagedResult
+from django_admin_grpc.models import GrpcFakeQuerySet, ModelWrapper
+from django_admin_grpc.paginator import GrpcPaginator, PagedResult
 
 if TYPE_CHECKING:
-    from django_grpc_admin.adapters import BaseGrpcServiceAdapter
-    from django_grpc_admin.resources import BaseGrpcResource
+    from django_admin_grpc.adapters import BaseGrpcServiceAdapter
+    from django_admin_grpc.resources import BaseGrpcResource
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +121,7 @@ class GrpcChangeList(ChangeList):
                     if field_type == "boolean" or (
                         field_type == "choices" and choices_list
                     ):
-                        from django_grpc_admin.filters import create_grpc_filter_spec
+                        from django_admin_grpc.filters import create_grpc_filter_spec
 
                         filter_class = create_grpc_filter_spec(
                             field_path, field_type, choices_list
@@ -149,7 +149,7 @@ class GrpcChangeList(ChangeList):
                                 "Failed to create filter for %s: %s", field_path, e
                             )
                     elif field_type == "text":
-                        from django_grpc_admin.filters import GrpcTextInputFilter
+                        from django_admin_grpc.filters import GrpcTextInputFilter
 
                         fake_field = type(
                             "FakeField",
@@ -251,11 +251,11 @@ class GrpcChangeList(ChangeList):
                     self.cursor_next_url = "?" + urlencode(params)
                 else:
                     self.cursor_next_url = None  # type: ignore[assignment]
-                from django_grpc_admin.settings import get_setting
+                from django_admin_grpc.settings import get_setting
 
                 self.paginator.template_name = (
                     get_setting("DEFAULT_CURSOR_PAGINATION_TEMPLATE")
-                    or "django_grpc_admin/cursor_pagination.html"
+                    or "django_admin_grpc/cursor_pagination.html"
                 )
 
         except Exception as e:
@@ -330,12 +330,12 @@ class GrpcResourceAdmin(ModelAdmin):
         )
         if resource_template:
             return cast(str, resource_template)
-        from django_grpc_admin.settings import get_setting
+        from django_admin_grpc.settings import get_setting
 
         setting_template = get_setting("DEFAULT_CHANGE_FORM_TEMPLATE")
         if setting_template:
             return cast(str, setting_template)
-        return "django_grpc_admin/change_form.html"
+        return "django_admin_grpc/change_form.html"
 
     def _get_delete_confirm_template(self) -> str:
         """Return the template path for the delete confirmation view.
@@ -350,12 +350,12 @@ class GrpcResourceAdmin(ModelAdmin):
         )
         if resource_template:
             return cast(str, resource_template)
-        from django_grpc_admin.settings import get_setting
+        from django_admin_grpc.settings import get_setting
 
         setting_template = get_setting("DEFAULT_DELETE_CONFIRM_TEMPLATE")
         if setting_template:
             return cast(str, setting_template)
-        return "django_grpc_admin/delete_confirm.html"
+        return "django_admin_grpc/delete_confirm.html"
 
     @classmethod
     def with_base(cls, base_admin_class: type) -> type[Any]:
@@ -419,7 +419,7 @@ class GrpcResourceAdmin(ModelAdmin):
                 return self.adapter_class()
             return self.adapter_class
         if self.service_name:
-            from django_grpc_admin.registry import adapter_registry
+            from django_admin_grpc.registry import adapter_registry
 
             return adapter_registry.get_adapter(self.service_name)
         return None
@@ -527,8 +527,8 @@ class GrpcResourceAdmin(ModelAdmin):
     # ── Forms ──────────────────────────────────────────────────────────────
 
     def _build_form_class(self) -> type[Any]:
-        from django_grpc_admin.forms import FormBuilder
-        from django_grpc_admin.widgets import get_default_widgets
+        from django_admin_grpc.forms import FormBuilder
+        from django_admin_grpc.widgets import get_default_widgets
 
         return FormBuilder.build(
             self._resource_class,
@@ -570,7 +570,7 @@ class GrpcResourceAdmin(ModelAdmin):
         ]
 
     def get_grpc_detail_rows(self, obj: Any) -> list[dict[str, Any]]:
-        from django_grpc_admin.resources import FKFieldConfig
+        from django_admin_grpc.resources import FKFieldConfig
 
         rows: list[dict[str, Any]] = []
         for label, field_name in self.get_grpc_detail_fields():
@@ -599,7 +599,7 @@ class GrpcResourceAdmin(ModelAdmin):
         config: Any,
         fk_id: Any,
     ) -> str | None:
-        from django_grpc_admin.resources import FKFieldConfig
+        from django_admin_grpc.resources import FKFieldConfig
 
         if config is None or not isinstance(config, FKFieldConfig):
             return fk_id if fk_id is not None else None  # type: ignore[return-value]
@@ -642,7 +642,7 @@ class GrpcResourceAdmin(ModelAdmin):
             display_field = getattr(config, "display_field", "")
             get_method = getattr(config, "get_method", "get")
             try:
-                from django_grpc_admin.registry import adapter_registry
+                from django_admin_grpc.registry import adapter_registry
 
                 adapter = adapter_registry.get_adapter(service)
                 if adapter is None:

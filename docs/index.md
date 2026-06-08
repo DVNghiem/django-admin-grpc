@@ -36,7 +36,7 @@ Use this package when you want to manage data from a remote service through Djan
 
 ```python
 # resources.py
-from django_grpc_admin.resources import (
+from django_admin_grpc.resources import (
     BaseGrpcResource,
     BooleanFieldConfig,
     CharFieldConfig,
@@ -59,8 +59,8 @@ class Product(BaseGrpcResource):
 
 
 # adapters.py
-from django_grpc_admin.adapters import BaseGrpcServiceAdapter
-from django_grpc_admin.paginator import PagedResult
+from django_admin_grpc.adapters import BaseGrpcServiceAdapter
+from django_admin_grpc.paginator import PagedResult
 
 class CatalogAdapter(BaseGrpcServiceAdapter):
     service_name = "catalog"
@@ -85,7 +85,7 @@ class CatalogAdapter(BaseGrpcServiceAdapter):
 
 # admin.py
 from django.contrib import admin
-from django_grpc_admin.admin import GrpcResourceAdmin
+from django_admin_grpc.admin import GrpcResourceAdmin
 
 from .resources import Product
 from .adapters import CatalogAdapter

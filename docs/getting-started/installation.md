@@ -34,7 +34,7 @@ This installs the package in editable mode along with:
 
 ## Add to Django
 
-Add `django_grpc_admin` to `INSTALLED_APPS` in your project's `settings.py`:
+Add `django_admin_grpc` to `INSTALLED_APPS` in your project's `settings.py`:
 
 ```python
 INSTALLED_APPS = [
@@ -44,13 +44,13 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-    "django_grpc_admin",  # <-- add this
+    "django_admin_grpc",  # <-- add this
     # your apps ...
 ]
 ```
 
 !!! note "Order matters"
-    Place `django_grpc_admin` after Django's built-in apps so its templates and static files can be overridden by your project if needed.
+    Place `django_admin_grpc` after Django's built-in apps so its templates and static files can be overridden by your project if needed.
 
 ## Verify the installation
 
@@ -61,8 +61,8 @@ python manage.py shell
 ```
 
 ```python
->>> import django_grpc_admin
->>> django_grpc_admin.__version__
+>>> import django_admin_grpc
+>>> django_admin_grpc.__version__
 '0.1.0'
 ```
 
@@ -74,7 +74,7 @@ django-grpc-admin works with popular Django admin themes such as [django-unfold]
 
 ```python
 from unfold.admin import ModelAdmin as UnfoldModelAdmin
-from django_grpc_admin.admin import GrpcResourceAdmin
+from django_admin_grpc.admin import GrpcResourceAdmin
 
 MyGrpcAdmin = GrpcResourceAdmin.with_base(UnfoldModelAdmin)
 

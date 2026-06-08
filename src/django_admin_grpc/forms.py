@@ -14,7 +14,7 @@ from django import forms
 from django.apps import apps
 
 if TYPE_CHECKING:
-    from django_grpc_admin.resources import BaseGrpcResource
+    from django_admin_grpc.resources import BaseGrpcResource
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +105,7 @@ class FormBuilder:
                 all fields are included.
         """
         if widgets is None:
-            from django_grpc_admin.widgets import get_default_widgets
+            from django_admin_grpc.widgets import get_default_widgets
 
             widgets = get_default_widgets()
 
@@ -129,7 +129,7 @@ class FormBuilder:
         config: Any,
         widgets: dict[str, Any] | None = None,
     ) -> forms.Field | None:
-        from django_grpc_admin.resources import (
+        from django_admin_grpc.resources import (
             BaseFieldConfig,
             BooleanFieldConfig,
             CharFieldConfig,

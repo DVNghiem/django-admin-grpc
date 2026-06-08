@@ -18,7 +18,7 @@ INSTALLED_APPS = [
     "django.contrib.auth",
     "django.contrib.admin",
     "django.contrib.messages",
-    "django_grpc_admin",
+    "django_admin_grpc",
 ]
 
 MIDDLEWARE = [

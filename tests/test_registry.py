@@ -1,9 +1,9 @@
 """
-Tests for django_grpc_admin.registry module.
+Tests for django_admin_grpc.registry module.
 """
 from unittest.mock import Mock
 
-from django_grpc_admin.registry import AdapterRegistry, adapter_registry
+from django_admin_grpc.registry import AdapterRegistry, adapter_registry
 
 
 class TestAdapterRegistry:

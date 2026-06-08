@@ -12,9 +12,9 @@ GRPC_ADMIN = {
     "GRPC_ADMIN_LOG_LEVEL": "INFO",
     "DEFAULT_WIDGETS": None,
     "DEFAULT_ADMIN_CLASS": "django.contrib.admin.ModelAdmin",
-    "DEFAULT_CHANGE_FORM_TEMPLATE": "django_grpc_admin/change_form.html",
-    "DEFAULT_DELETE_CONFIRM_TEMPLATE": "django_grpc_admin/delete_confirm.html",
-    "DEFAULT_CURSOR_PAGINATION_TEMPLATE": "django_grpc_admin/cursor_pagination.html",
+    "DEFAULT_CHANGE_FORM_TEMPLATE": "django_admin_grpc/change_form.html",
+    "DEFAULT_DELETE_CONFIRM_TEMPLATE": "django_admin_grpc/delete_confirm.html",
+    "DEFAULT_CURSOR_PAGINATION_TEMPLATE": "django_admin_grpc/cursor_pagination.html",
 }
 ```
 
@@ -116,19 +116,19 @@ Dotted path to the base `ModelAdmin` subclass. Used when creating admin classes 
 
 Template path for add/change views.
 
-**Default:** `"django_grpc_admin/change_form.html"`
+**Default:** `"django_admin_grpc/change_form.html"`
 
 ### DEFAULT_DELETE_CONFIRM_TEMPLATE
 
 Template path for delete confirmation views.
 
-**Default:** `"django_grpc_admin/delete_confirm.html"`
+**Default:** `"django_admin_grpc/delete_confirm.html"`
 
 ### DEFAULT_CURSOR_PAGINATION_TEMPLATE
 
 Template path for cursor pagination controls.
 
-**Default:** `"django_grpc_admin/cursor_pagination.html"`
+**Default:** `"django_admin_grpc/cursor_pagination.html"`
 
 ## Per-Resource Overrides
 

@@ -10,7 +10,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
-from django_grpc_admin.models import FakeModelBase, FakeModelMeta, GrpcFakeQuerySet
+from django_admin_grpc.models import FakeModelBase, FakeModelMeta, GrpcFakeQuerySet
 
 logger = logging.getLogger(__name__)
 
@@ -262,6 +262,6 @@ class BaseGrpcResource:
             A Django ``Form`` subclass.
         """
 
-        from django_grpc_admin.forms import FormBuilder
+        from django_admin_grpc.forms import FormBuilder
 
         return FormBuilder.build(cls, widgets=widgets)

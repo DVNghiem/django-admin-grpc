@@ -4,8 +4,8 @@ django-grpc-admin
 A reusable Django package for creating admin interfaces backed by gRPC services.
 """
 
-from django_grpc_admin.adapters import BaseGrpcServiceAdapter
-from django_grpc_admin.exceptions import (
+from django_admin_grpc.adapters import BaseGrpcServiceAdapter
+from django_admin_grpc.exceptions import (
     GrpcAdminError,
     GrpcDeadlineExceededError,
     GrpcInvalidArgumentError,
@@ -13,17 +13,17 @@ from django_grpc_admin.exceptions import (
     GrpcPermissionDeniedError,
     GrpcUnavailableError,
 )
-from django_grpc_admin.filters import (
+from django_admin_grpc.filters import (
     GrpcBooleanFieldListFilter,
     GrpcChoicesFieldListFilter,
     GrpcSimpleListFilter,
     GrpcTextInputFilter,
     create_grpc_filter_spec,
 )
-from django_grpc_admin.mappers import BaseGrpcMapper
-from django_grpc_admin.paginator import GrpcPaginator, PagedResult
-from django_grpc_admin.registry import AdapterRegistry, adapter_registry
-from django_grpc_admin.resources import (
+from django_admin_grpc.mappers import BaseGrpcMapper
+from django_admin_grpc.paginator import GrpcPaginator, PagedResult
+from django_admin_grpc.registry import AdapterRegistry, adapter_registry
+from django_admin_grpc.resources import (
     BaseFieldConfig,
     BaseGrpcResource,
     BooleanFieldConfig,

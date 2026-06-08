@@ -14,9 +14,9 @@ DEFAULTS: dict[str, Any] = {
     "GRPC_ADMIN_LOG_LEVEL": "INFO",
     "DEFAULT_WIDGETS": None,
     "DEFAULT_ADMIN_CLASS": "django.contrib.admin.ModelAdmin",
-    "DEFAULT_CHANGE_FORM_TEMPLATE": "django_grpc_admin/change_form.html",
-    "DEFAULT_DELETE_CONFIRM_TEMPLATE": "django_grpc_admin/delete_confirm.html",
-    "DEFAULT_CURSOR_PAGINATION_TEMPLATE": "django_grpc_admin/cursor_pagination.html",
+    "DEFAULT_CHANGE_FORM_TEMPLATE": "django_admin_grpc/change_form.html",
+    "DEFAULT_DELETE_CONFIRM_TEMPLATE": "django_admin_grpc/delete_confirm.html",
+    "DEFAULT_CURSOR_PAGINATION_TEMPLATE": "django_admin_grpc/cursor_pagination.html",
 }
 
 

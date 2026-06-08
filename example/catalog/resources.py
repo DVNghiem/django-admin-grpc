@@ -4,7 +4,7 @@ Catalog resources for the django-grpc-admin example.
 Demonstrates how a consumer project defines remote entities using
 BaseGrpcResource and field config classes.
 """
-from django_grpc_admin.resources import (
+from django_admin_grpc.resources import (
     BaseGrpcResource,
     BooleanFieldConfig,
     CharFieldConfig,

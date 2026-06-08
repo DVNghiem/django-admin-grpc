@@ -10,7 +10,7 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from django_grpc_admin.adapters import BaseGrpcServiceAdapter
+    from django_admin_grpc.adapters import BaseGrpcServiceAdapter
 
 logger = logging.getLogger(__name__)
 

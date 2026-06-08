@@ -104,7 +104,7 @@ Map a `grpc.RpcError` to the appropriate `GrpcAdminError` subclass.
 ### Usage in Adapters
 
 ```python
-from django_grpc_admin.exceptions import map_grpc_error
+from django_admin_grpc.exceptions import map_grpc_error
 
 class MyAdapter(BaseGrpcServiceAdapter):
     def get(self, resource_class, pk):
@@ -117,7 +117,7 @@ class MyAdapter(BaseGrpcServiceAdapter):
 ### Catching Typed Exceptions
 
 ```python
-from django_grpc_admin.exceptions import GrpcNotFoundError, GrpcPermissionDeniedError
+from django_admin_grpc.exceptions import GrpcNotFoundError, GrpcPermissionDeniedError
 
 class ProductAdmin(GrpcResourceAdmin):
     def change_view(self, request, object_id, ...):

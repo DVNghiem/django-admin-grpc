@@ -7,7 +7,7 @@ using GrpcResourceAdmin.
 from django import forms
 from django.contrib import admin
 
-from django_grpc_admin.admin import GrpcResourceAdmin
+from django_admin_grpc.admin import GrpcResourceAdmin
 
 from .adapters import CatalogGrpcAdapter, CategoryAdapter
 from .resources import CategoryResource, ProductResource

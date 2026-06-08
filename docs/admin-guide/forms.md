@@ -90,7 +90,7 @@ For full control, create a custom form class and return it from `_build_form_cla
 
 ```python
 from django import forms
-from django_grpc_admin.forms import GrpcAdminForm
+from django_admin_grpc.forms import GrpcAdminForm
 
 class ProductForm(GrpcAdminForm):
     name = forms.CharField(max_length=200)
@@ -209,7 +209,7 @@ Generates a `forms.ChoiceField` with a `Select` widget.
 ### Foreign Key Field
 
 ```python
-from django_grpc_admin.resources import FKFieldConfig
+from django_admin_grpc.resources import FKFieldConfig
 
 # Django model FK
 FKFieldConfig(
@@ -235,7 +235,7 @@ Generates a `ModelPKChoiceField` (for Django model FKs) or a `CharField` (for gR
 ### Date / DateTime Fields
 
 ```python
-from django_grpc_admin.resources import DateFieldConfig, DateTimeFieldConfig
+from django_admin_grpc.resources import DateFieldConfig, DateTimeFieldConfig
 
 DateTimeFieldConfig(name="created_at")
 DateFieldConfig(name="birth_date")

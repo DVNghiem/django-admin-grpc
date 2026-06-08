@@ -18,7 +18,7 @@ If your gRPC service uses plain dictionaries and field names match 1-to-1, you c
 Subclass `BaseGrpcMapper` and implement the transformation methods:
 
 ```python
-from django_grpc_admin.mappers import BaseGrpcMapper
+from django_admin_grpc.mappers import BaseGrpcMapper
 
 class ProductMapper(BaseGrpcMapper):
     def to_create_request(self, resource_class, cleaned_data):
@@ -134,7 +134,7 @@ Convert a gRPC *List* response into a dict with keys `items`, `total`, and `next
 The built-in mapper assumes the adapter works with plain dicts and that `resource_class.from_response()` can handle the response.
 
 ```python
-from django_grpc_admin.mappers import DefaultGrpcMapper
+from django_admin_grpc.mappers import DefaultGrpcMapper
 
 mapper = DefaultGrpcMapper()
 ```

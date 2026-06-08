@@ -146,7 +146,7 @@ Central registry for adapter instances.
 Register an adapter.
 
 ```python
-from django_grpc_admin.registry import adapter_registry
+from django_admin_grpc.registry import adapter_registry
 adapter_registry.register("catalog", CatalogAdapter())
 ```
 

@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "django-grpc-admin"
+name = "django-admin-grpc"
 version = "0.1.0"
 description = "Django Admin backed by gRPC services — no ORM required."
 readme = "README.md"
@@ -51,7 +51,7 @@ Documentation = "https://github.com/DVNghiem/django-admin-grpc#readme"
 Repository = "https://github.com/DVNghiem/django-admin-grpc"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/django_grpc_admin"]
+packages = ["src/django_admin_grpc"]
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -83,4 +83,4 @@ django_settings_module = "tests.settings"
 DJANGO_SETTINGS_MODULE = "tests.settings"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "--cov=django_grpc_admin --cov-report=term-missing --cov-fail-under=80"
+addopts = "--cov=django_admin_grpc --cov-report=term-missing --cov-fail-under=80"

@@ -6,7 +6,7 @@ A complete example of a product catalog backed by a gRPC service.
 
 ```python
 # catalog/resources.py
-from django_grpc_admin.resources import (
+from django_admin_grpc.resources import (
     BaseGrpcResource,
     BooleanFieldConfig,
     CharFieldConfig,
@@ -39,8 +39,8 @@ class Product(BaseGrpcResource):
 
 
 # catalog/adapters.py
-from django_grpc_admin.adapters import BaseGrpcServiceAdapter
-from django_grpc_admin.paginator import PagedResult
+from django_admin_grpc.adapters import BaseGrpcServiceAdapter
+from django_admin_grpc.paginator import PagedResult
 import grpc
 
 class CatalogAdapter(BaseGrpcServiceAdapter):
@@ -79,7 +79,7 @@ class CatalogAdapter(BaseGrpcServiceAdapter):
 
 # catalog/admin.py
 from django.contrib import admin
-from django_grpc_admin.admin import GrpcResourceAdmin
+from django_admin_grpc.admin import GrpcResourceAdmin
 from .resources import Product
 from .adapters import CatalogAdapter
 
@@ -103,7 +103,7 @@ class ProductAdmin(GrpcResourceAdmin):
 Display data from a reporting service without allowing edits.
 
 ```python
-from django_grpc_admin.resources import (
+from django_admin_grpc.resources import (
     BaseGrpcResource,
     CharFieldConfig,
     DateFieldConfig,
@@ -145,7 +145,7 @@ class SalesReportAdmin(GrpcResourceAdmin):
 Link to another gRPC service for foreign key resolution.
 
 ```python
-from django_grpc_admin.resources import (
+from django_admin_grpc.resources import (
     BaseGrpcResource,
     BooleanFieldConfig,
     CharFieldConfig,
@@ -188,7 +188,7 @@ class NetworkRuleAdmin(GrpcResourceAdmin):
 Pass authentication tokens to the gRPC service.
 
 ```python
-from django_grpc_admin.adapters import BaseGrpcServiceAdapter
+from django_admin_grpc.adapters import BaseGrpcServiceAdapter
 
 class SecureCatalogAdapter(BaseGrpcServiceAdapter):
     service_name = "catalog"
@@ -225,7 +225,7 @@ class CatalogConfig(AppConfig):
     name = "catalog"
 
     def ready(self):
-        from django_grpc_admin.registry import adapter_registry
+        from django_admin_grpc.registry import adapter_registry
         from .adapters import SecureCatalogAdapter
 
         token = get_service_account_token()  # your auth logic

@@ -45,7 +45,7 @@ class NetworkRule(GrpcDataClass):
 **After:**
 
 ```python
-from django_grpc_admin.resources import (
+from django_admin_grpc.resources import (
     BaseGrpcResource,
     BooleanFieldConfig,
     CharFieldConfig,
@@ -80,8 +80,8 @@ class NetworkRulesGrpcClient(GrpcServiceClient):
 **After:**
 
 ```python
-from django_grpc_admin.adapters import BaseGrpcServiceAdapter
-from django_grpc_admin.paginator import PagedResult
+from django_admin_grpc.adapters import BaseGrpcServiceAdapter
+from django_admin_grpc.paginator import PagedResult
 
 class NetworkRulesAdapter(BaseGrpcServiceAdapter):
     service_name = "network_rules"
@@ -132,7 +132,7 @@ admin.site._registry[_network_rule_admin._fake_model] = _network_rule_admin
 
 ```python
 from django.contrib import admin
-from django_grpc_admin.admin import GrpcResourceAdmin
+from django_admin_grpc.admin import GrpcResourceAdmin
 
 @admin.register(NetworkRule.admin_model())
 class NetworkRuleAdmin(GrpcResourceAdmin):
@@ -156,12 +156,12 @@ class NetworkRuleAdmin(GrpcResourceAdmin):
 ## Migration Checklist
 
 - [ ] Install `django-grpc-admin`: `pip install django-grpc-admin`
-- [ ] Add `"django_grpc_admin"` to `INSTALLED_APPS`
+- [ ] Add `"django_admin_grpc"` to `INSTALLED_APPS`
 - [ ] Convert each `GrpcDataClass` → `BaseGrpcResource` with specific field config classes
 - [ ] Convert each `GrpcServiceClient` → `BaseGrpcServiceAdapter`
 - [ ] Move admin classes to use `GrpcResourceAdmin` + `@admin.register(...)`
 - [ ] Update any custom `change_view` / `get_grpc_filters` overrides to match new API
-- [ ] Verify templates load from `django_grpc_admin/templates/`
+- [ ] Verify templates load from `django_admin_grpc/templates/`
 - [ ] Remove old `core/grpc_admin/` code from your project
 - [ ] Run admin smoke tests to confirm list / detail / create / update / delete
 

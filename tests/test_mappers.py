@@ -1,11 +1,11 @@
 """
-Tests for django_grpc_admin.mappers module.
+Tests for django_admin_grpc.mappers module.
 """
 
 import pytest
 
-from django_grpc_admin.mappers import BaseGrpcMapper, DefaultGrpcMapper
-from django_grpc_admin.resources import (
+from django_admin_grpc.mappers import BaseGrpcMapper, DefaultGrpcMapper
+from django_admin_grpc.resources import (
     BaseGrpcResource,
     CharFieldConfig,
     IntegerFieldConfig,

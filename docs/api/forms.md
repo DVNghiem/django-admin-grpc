@@ -65,7 +65,7 @@ Build and return a `Form` subclass.
 **Returns:** A `Form` subclass named `{ResourceClass}Form`.
 
 ```python
-from django_grpc_admin.forms import FormBuilder
+from django_admin_grpc.forms import FormBuilder
 
 form_class = FormBuilder.build(
     Product,

@@ -23,7 +23,7 @@ Add the app to `INSTALLED_APPS`:
 ```python
 INSTALLED_APPS = [
     # ...
-    "django_grpc_admin",
+    "django_admin_grpc",
 ]
 ```
 
@@ -31,7 +31,7 @@ INSTALLED_APPS = [
 
 ```python
 # resources.py
-from django_grpc_admin.resources import (
+from django_admin_grpc.resources import (
     BaseGrpcResource,
     BooleanFieldConfig,
     CharFieldConfig,
@@ -76,7 +76,7 @@ That is all. Django Admin now shows list, add, change, and delete screens powere
 A resource is a Python class that tells Django Admin what columns exist, what types they are, and which one is the primary key.
 
 ```python
-from django_grpc_admin.resources import (
+from django_admin_grpc.resources import (
     BaseGrpcResource,
     BooleanFieldConfig,
     CharFieldConfig,
@@ -147,8 +147,8 @@ class NetworkRule(BaseGrpcResource):
 An adapter bridges Django Admin and your gRPC service. Subclass `BaseGrpcServiceAdapter` and implement at least `list` and `get`. Implement `create`, `update`, and `delete` only if you need write access.
 
 ```python
-from django_grpc_admin.adapters import BaseGrpcServiceAdapter
-from django_grpc_admin.paginator import PagedResult
+from django_admin_grpc.adapters import BaseGrpcServiceAdapter
+from django_admin_grpc.paginator import PagedResult
 import grpc
 
 class NetworkRulesAdapter(BaseGrpcServiceAdapter):
@@ -197,7 +197,7 @@ class NetworkRulesAdapter(BaseGrpcServiceAdapter):
 **Registering via the adapter registry (optional):**
 
 ```python
-from django_grpc_admin.registry import adapter_registry
+from django_admin_grpc.registry import adapter_registry
 
 adapter = NetworkRulesAdapter()
 adapter_registry.register("network_rules", adapter)
@@ -213,7 +213,7 @@ Register the resource's fake model with a `GrpcResourceAdmin` subclass:
 
 ```python
 from django.contrib import admin
-from django_grpc_admin.admin import GrpcResourceAdmin
+from django_admin_grpc.admin import GrpcResourceAdmin
 
 from .resources import NetworkRule
 from .adapters import NetworkRulesAdapter
@@ -393,7 +393,7 @@ gRPC errors are caught at the adapter boundary and mapped to typed exceptions. T
 **Mapping errors in your adapter:**
 
 ```python
-from django_grpc_admin.exceptions import map_grpc_error
+from django_admin_grpc.exceptions import map_grpc_error
 
 class MyAdapter(BaseGrpcServiceAdapter):
     def get(self, resource_class, pk):
@@ -415,7 +415,7 @@ You can override widgets per field when building the form class:
 
 ```python
 from django import forms
-from django_grpc_admin.admin import GrpcResourceAdmin
+from django_admin_grpc.admin import GrpcResourceAdmin
 
 class ProductAdmin(GrpcResourceAdmin):
     resource_class = Product
@@ -449,7 +449,7 @@ GRPC_ADMIN = {
 
 ```python
 from django.contrib import admin
-from django_grpc_admin.admin import GrpcResourceAdmin
+from django_admin_grpc.admin import GrpcResourceAdmin
 from unfold.admin import ModelAdmin as UnfoldModelAdmin
 
 class MyGrpcAdmin(GrpcResourceAdmin, UnfoldModelAdmin):
@@ -504,9 +504,9 @@ Set these in your Django `settings.py`:
 | `GRPC_ADMIN_LOG_LEVEL` | `"INFO"` | Log level for the package logger. |
 | `DEFAULT_WIDGETS` | `None` | Dict mapping field type to widget class or dotted path. |
 | `DEFAULT_ADMIN_CLASS` | `django.contrib.admin.ModelAdmin` | Dotted path to the base `ModelAdmin` subclass. |
-| `DEFAULT_CHANGE_FORM_TEMPLATE` | `django_grpc_admin/change_form.html` | Template for add/change views. |
-| `DEFAULT_DELETE_CONFIRM_TEMPLATE` | `django_grpc_admin/delete_confirm.html` | Template for delete confirmation. |
-| `DEFAULT_CURSOR_PAGINATION_TEMPLATE` | `django_grpc_admin/cursor_pagination.html` | Template for cursor pagination controls. |
+| `DEFAULT_CHANGE_FORM_TEMPLATE` | `django_admin_grpc/change_form.html` | Template for add/change views. |
+| `DEFAULT_DELETE_CONFIRM_TEMPLATE` | `django_admin_grpc/delete_confirm.html` | Template for delete confirmation. |
+| `DEFAULT_CURSOR_PAGINATION_TEMPLATE` | `django_admin_grpc/cursor_pagination.html` | Template for cursor pagination controls. |
 
 ---
 

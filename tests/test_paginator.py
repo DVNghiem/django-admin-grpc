@@ -1,7 +1,7 @@
 """
-Tests for django_grpc_admin.paginator module.
+Tests for django_admin_grpc.paginator module.
 """
-from django_grpc_admin.paginator import GrpcPaginator, PagedResult
+from django_admin_grpc.paginator import GrpcPaginator, PagedResult
 
 
 class TestPagedResult:

@@ -1,11 +1,11 @@
 """
-Tests for django_grpc_admin.models module.
+Tests for django_admin_grpc.models module.
 """
 import pytest
 from django.core.exceptions import FieldDoesNotExist
 
-from django_grpc_admin.models import FakeModelMeta, GrpcFakeQuerySet, ModelWrapper
-from django_grpc_admin.resources import (
+from django_admin_grpc.models import FakeModelMeta, GrpcFakeQuerySet, ModelWrapper
+from django_admin_grpc.resources import (
     BaseGrpcResource,
     BooleanFieldConfig,
     CharFieldConfig,

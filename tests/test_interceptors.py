@@ -1,12 +1,12 @@
 """
-Tests for django_grpc_admin.interceptors module.
+Tests for django_admin_grpc.interceptors module.
 """
 from unittest.mock import Mock, patch
 
 import grpc
 import pytest
 
-from django_grpc_admin.interceptors import TraceClientInterceptor, _default_provider
+from django_admin_grpc.interceptors import TraceClientInterceptor, _default_provider
 
 
 class TestDefaultProvider:
@@ -43,7 +43,7 @@ class TestTraceClientInterceptor:
         request = Mock()
 
         with patch(
-            "django_grpc_admin.interceptors.time.monotonic", side_effect=[0.0, 0.123]
+            "django_admin_grpc.interceptors.time.monotonic", side_effect=[0.0, 0.123]
         ):
             result = interceptor.intercept_unary_unary(
                 continuation, call_details, request
@@ -120,7 +120,7 @@ class TestTraceClientInterceptor:
         call_details.compression = None
 
         with patch(
-            "django_grpc_admin.interceptors.time.monotonic", side_effect=[0.0, 0.5]
+            "django_admin_grpc.interceptors.time.monotonic", side_effect=[0.0, 0.5]
         ), pytest.raises(grpc.RpcError):
             interceptor.intercept_unary_unary(
                 continuation, call_details, Mock()

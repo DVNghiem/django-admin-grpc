@@ -20,7 +20,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-    "django_grpc_admin",
+    "django_admin_grpc",
     "catalog",
 ]
 

@@ -7,8 +7,8 @@ An **adapter** is the transport layer between Django Admin and your gRPC service
 Subclass `BaseGrpcServiceAdapter` and implement at least `list()` and `get()`. Implement `create()`, `update()`, and `delete()` only if you need write access.
 
 ```python
-from django_grpc_admin.adapters import BaseGrpcServiceAdapter
-from django_grpc_admin.paginator import PagedResult
+from django_admin_grpc.adapters import BaseGrpcServiceAdapter
+from django_admin_grpc.paginator import PagedResult
 import grpc
 
 class CatalogAdapter(BaseGrpcServiceAdapter):
@@ -173,7 +173,7 @@ def channel(self):
 Maps a `grpc.RpcError` to a typed `GrpcAdminError`. Callers should `raise` the result.
 
 ```python
-from django_grpc_admin.exceptions import map_grpc_error
+from django_admin_grpc.exceptions import map_grpc_error
 
 def get(self, resource_class, pk):
     try:
@@ -189,7 +189,7 @@ The `AdapterRegistry` is a central place to register and look up adapter instanc
 ### Registering an adapter
 
 ```python
-from django_grpc_admin.registry import adapter_registry
+from django_admin_grpc.registry import adapter_registry
 from myapp.adapters import CatalogAdapter
 
 adapter = CatalogAdapter()
@@ -219,7 +219,7 @@ class ProductAdmin(GrpcResourceAdmin):
 ### Registry API
 
 ```python
-from django_grpc_admin.registry import adapter_registry
+from django_admin_grpc.registry import adapter_registry
 
 # Register
 adapter_registry.register("catalog", adapter)

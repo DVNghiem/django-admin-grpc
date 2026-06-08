@@ -1,11 +1,11 @@
 """
-Tests for django_grpc_admin.filters module.
+Tests for django_admin_grpc.filters module.
 """
 from unittest.mock import Mock
 
 import pytest
 
-from django_grpc_admin.filters import (
+from django_admin_grpc.filters import (
     GrpcBooleanFieldListFilter,
     GrpcChoicesFieldListFilter,
     GrpcFieldListFilter,

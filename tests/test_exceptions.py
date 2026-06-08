@@ -1,11 +1,11 @@
 """
-Tests for django_grpc_admin.exceptions module.
+Tests for django_admin_grpc.exceptions module.
 """
 from unittest.mock import Mock
 
 import grpc
 
-from django_grpc_admin.exceptions import (
+from django_admin_grpc.exceptions import (
     GrpcAdminError,
     GrpcDeadlineExceededError,
     GrpcInvalidArgumentError,

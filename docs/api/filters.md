@@ -119,7 +119,7 @@ A `FieldListFilter` subclass ready for `list_filter`.
 ### Example
 
 ```python
-from django_grpc_admin.filters import create_grpc_filter_spec
+from django_admin_grpc.filters import create_grpc_filter_spec
 
 filter_class = create_grpc_filter_spec(
     "status",

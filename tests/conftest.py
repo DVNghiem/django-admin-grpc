@@ -27,7 +27,7 @@ def django_settings():
                 "django.contrib.auth",
                 "django.contrib.admin",
                 "django.contrib.messages",
-                "django_grpc_admin",
+                "django_admin_grpc",
             ],
             USE_TZ=True,
         )
@@ -38,7 +38,7 @@ def django_settings():
 @pytest.fixture
 def reset_registry():
     """Reset the adapter registry before/after each test."""
-    from django_grpc_admin.registry import adapter_registry
+    from django_admin_grpc.registry import adapter_registry
 
     adapter_registry.clear()
     yield adapter_registry
