@@ -7,7 +7,7 @@ Thank you for your interest in improving django-grpc-admin! This page covers how
 1. **Clone the repository:**
 
    ```bash
-   git clone https://github.com/yourorg/django-grpc-admin.git
+   git clone https://github.com/DVNghiem/django-admin-grpc.git
    cd django-grpc-admin
    ```
 

@@ -521,13 +521,6 @@ python manage.py runserver
 ```
 
 Browse to `/admin/` to see Products and Categories backed by gRPC-style adapters.
-
----
-
-## Migration Notes
-
-If you are migrating from an in-project `grpc_admin` implementation to this reusable package, see [`MIGRATION_NOTES.md`](MIGRATION_NOTES.md) for a side-by-side comparison of the old and new patterns.
-
 ---
 
 ## Contributing

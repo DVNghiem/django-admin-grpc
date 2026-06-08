@@ -43,9 +43,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourorg/django-grpc-admin"
-Documentation = "https://github.com/yourorg/django-grpc-admin#readme"
-Repository = "https://github.com/yourorg/django-grpc-admin"
+Homepage = "https://github.com/DVNghiem/django-admin-grpc"
+Documentation = "https://github.com/DVNghiem/django-admin-grpc#readme"
+Repository = "https://github.com/DVNghiem/django-admin-grpc"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/django_grpc_admin"]
