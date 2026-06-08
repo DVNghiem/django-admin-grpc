@@ -20,6 +20,7 @@ from django_admin_grpc.filters import (
     GrpcTextInputFilter,
     create_grpc_filter_spec,
 )
+from django_admin_grpc.guide import GUIDE
 from django_admin_grpc.mappers import BaseGrpcMapper
 from django_admin_grpc.paginator import GrpcPaginator, PagedResult
 from django_admin_grpc.registry import AdapterRegistry, adapter_registry
@@ -40,6 +41,7 @@ from django_admin_grpc.resources import (
 __version__ = "0.1.0"
 
 __all__ = [
+    "GUIDE",
     "BaseFieldConfig",
     "BaseGrpcResource",
     "BaseGrpcServiceAdapter",
