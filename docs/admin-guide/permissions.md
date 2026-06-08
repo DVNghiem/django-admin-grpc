@@ -1,6 +1,6 @@
 # Permissions
 
-Permissions in django-grpc-admin work at two levels:
+Permissions in django-admin-grpc work at two levels:
 
 1. **Capability flags** — whether create, update, or delete is enabled at all
 2. **Django's permission system** — `has_add_permission`, `has_change_permission`, `has_delete_permission`
@@ -121,7 +121,7 @@ Users can still browse the list and view detail pages, but all edit controls are
 
 ## Object-Level Permissions
 
-django-grpc-admin does not support object-level permissions out of the box because it does not have a database table to query. If you need object-level checks, implement them in the adapter:
+django-admin-grpc does not support object-level permissions out of the box because it does not have a database table to query. If you need object-level checks, implement them in the adapter:
 
 ```python
 class CatalogAdapter(BaseGrpcServiceAdapter):

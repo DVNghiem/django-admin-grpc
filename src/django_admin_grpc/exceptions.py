@@ -1,5 +1,5 @@
 """
-Exception hierarchy for django-grpc-admin.
+Exception hierarchy for django-admin-grpc.
 
 Maps gRPC status codes to typed Python exceptions.
 """
@@ -8,7 +8,7 @@ import grpc
 
 
 class GrpcAdminError(Exception):
-    """Base exception for all django-grpc-admin errors."""
+    """Base exception for all django-admin-grpc errors."""
 
     def __init__(
         self,

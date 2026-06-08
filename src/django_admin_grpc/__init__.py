@@ -1,5 +1,5 @@
 """
-django-grpc-admin
+django-admin-grpc
 
 A reusable Django package for creating admin interfaces backed by gRPC services.
 """

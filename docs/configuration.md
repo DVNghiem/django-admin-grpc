@@ -1,6 +1,6 @@
 # Configuration
 
-All django-grpc-admin settings live under a single `GRPC_ADMIN` dict in your Django `settings.py`.
+All django-admin-grpc settings live under a single `GRPC_ADMIN` dict in your Django `settings.py`.
 
 ```python
 # settings.py

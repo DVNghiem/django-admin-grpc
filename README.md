@@ -1,8 +1,8 @@
-# django-grpc-admin
+# django-admin-grpc
 
 Django Admin backed by gRPC services — no ORM required.
 
-[![PyPI version](https://badge.fury.io/py/django-grpc-admin.svg)](https://pypi.org/project/django-grpc-admin/)
+[![PyPI version](https://badge.fury.io/py/django-admin-grpc.svg)](https://pypi.org/project/django-admin-grpc/)
 ![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)
 ![Django versions](https://img.shields.io/badge/django-5.x%20%7C%206.x-blue)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -10,12 +10,12 @@ Django Admin backed by gRPC services — no ORM required.
 
 ---
 
-**django-grpc-admin** lets you expose remote gRPC microservices inside Django Admin with full list, create, update, delete and search support. You define a resource schema, wire a gRPC adapter, and register a single admin class — the package handles forms, pagination, filtering, and error mapping for you.
+**django-admin-grpc** lets you expose remote gRPC microservices inside Django Admin with full list, create, update, delete and search support. You define a resource schema, wire a gRPC adapter, and register a single admin class — the package handles forms, pagination, filtering, and error mapping for you.
 
 ## Installation
 
 ```bash
-pip install django-grpc-admin
+pip install django-admin-grpc
 ```
 
 Add the app to `INSTALLED_APPS`:

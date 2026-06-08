@@ -1,5 +1,5 @@
 """
-Catalog resources for the django-grpc-admin example.
+Catalog resources for the django-admin-grpc example.
 
 Demonstrates how a consumer project defines remote entities using
 BaseGrpcResource and field config classes.

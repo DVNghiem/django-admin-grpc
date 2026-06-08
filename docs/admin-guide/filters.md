@@ -1,6 +1,6 @@
 # Filters
 
-Filters in django-grpc-admin appear in the sidebar of list views, just like standard Django Admin. They do not touch the database — instead, they pass query-string parameters to the adapter's `list()` method.
+Filters in django-admin-grpc appear in the sidebar of list views, just like standard Django Admin. They do not touch the database — instead, they pass query-string parameters to the adapter's `list()` method.
 
 ## Simple Filter List
 

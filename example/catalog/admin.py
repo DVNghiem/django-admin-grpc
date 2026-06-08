@@ -1,5 +1,5 @@
 """
-Catalog admin registration for the django-grpc-admin example.
+Catalog admin registration for the django-admin-grpc example.
 
 Demonstrates how a consumer project wires resources into Django Admin
 using GrpcResourceAdmin.

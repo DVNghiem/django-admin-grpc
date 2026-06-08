@@ -1,5 +1,5 @@
 """
-Form helpers for django-grpc-admin.
+Form helpers for django-admin-grpc.
 
 ``FormBuilder`` constructs a Django ``Form`` subclass from a resource's
 ``BaseFieldConfig`` list.  ``ModelPKChoiceField`` is used for foreign-key fields

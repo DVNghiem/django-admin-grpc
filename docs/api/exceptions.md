@@ -14,7 +14,7 @@ Exception
 
 ## `GrpcAdminError`
 
-Base exception for all django-grpc-admin errors.
+Base exception for all django-admin-grpc errors.
 
 ### Parameters
 

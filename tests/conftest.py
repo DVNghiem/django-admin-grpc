@@ -1,5 +1,5 @@
 """
-Pytest fixtures and configuration for django-grpc-admin tests.
+Pytest fixtures and configuration for django-admin-grpc tests.
 """
 import django
 import pytest

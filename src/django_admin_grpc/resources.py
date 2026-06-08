@@ -1,5 +1,5 @@
 """
-Base resource and field configuration for django-grpc-admin.
+Base resource and field configuration for django-admin-grpc.
 
 A ``BaseGrpcResource`` subclass declares the shape of a remote entity so that
 Django admin can render lists, forms and detail views without touching the ORM.

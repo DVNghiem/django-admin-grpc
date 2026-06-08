@@ -9,7 +9,7 @@
 ## Install from PyPI
 
 ```bash
-pip install django-grpc-admin
+pip install django-admin-grpc
 ```
 
 ## Install with development dependencies
@@ -70,7 +70,7 @@ If the import succeeds, the package is installed correctly.
 
 ## Optional: install a custom admin theme
 
-django-grpc-admin works with popular Django admin themes such as [django-unfold](https://github.com/unfoldadmin/django-unfold) and [django-jazzmin](https://github.com/farridav/django-jazzmin). Install the theme as usual, then use `GrpcResourceAdmin.with_base()` to combine it with the gRPC admin base class.
+django-admin-grpc works with popular Django admin themes such as [django-unfold](https://github.com/unfoldadmin/django-unfold) and [django-jazzmin](https://github.com/farridav/django-jazzmin). Install the theme as usual, then use `GrpcResourceAdmin.with_base()` to combine it with the gRPC admin base class.
 
 ```python
 from unfold.admin import ModelAdmin as UnfoldModelAdmin

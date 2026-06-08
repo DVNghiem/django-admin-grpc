@@ -1,5 +1,5 @@
 """
-Minimal Django settings for testing django-grpc-admin without a real database.
+Minimal Django settings for testing django-admin-grpc without a real database.
 """
 
 SECRET_KEY = "test-secret-key-not-for-production"

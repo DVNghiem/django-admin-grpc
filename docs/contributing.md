@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for your interest in improving django-grpc-admin! This page covers how to set up your environment, run tests, and submit changes.
+Thank you for your interest in improving django-admin-grpc! This page covers how to set up your environment, run tests, and submit changes.
 
 ## Development Setup
 
@@ -8,7 +8,7 @@ Thank you for your interest in improving django-grpc-admin! This page covers how
 
    ```bash
    git clone https://github.com/DVNghiem/django-admin-grpc.git
-   cd django-grpc-admin
+   cd django-admin-grpc
    ```
 
 2. **Create a virtual environment:**
@@ -35,7 +35,7 @@ Thank you for your interest in improving django-grpc-admin! This page covers how
 ## Project Structure
 
 ```
-django-grpc-admin/
+django-admin-grpc/
 ├── src/django_admin_grpc/     # Package source code
 │   ├── __init__.py
 │   ├── admin.py                # GrpcResourceAdmin, GrpcChangeList

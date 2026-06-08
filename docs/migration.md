@@ -1,6 +1,6 @@
 # Migration Guide
 
-This guide helps you migrate from a custom in-project gRPC admin implementation to the reusable `django-grpc-admin` package.
+This guide helps you migrate from a custom in-project gRPC admin implementation to the reusable `django-admin-grpc` package.
 
 ## What You Are Replacing
 
@@ -12,7 +12,7 @@ If your project has code like this:
 - Manual `admin.site._registry` manipulation
 - Inline form builders, fake models, and paginators
 
-Then you can replace all of that with `django-grpc-admin`.
+Then you can replace all of that with `django-admin-grpc`.
 
 ## Before and After
 
@@ -155,7 +155,7 @@ class NetworkRuleAdmin(GrpcResourceAdmin):
 
 ## Migration Checklist
 
-- [ ] Install `django-grpc-admin`: `pip install django-grpc-admin`
+- [ ] Install `django-admin-grpc`: `pip install django-admin-grpc`
 - [ ] Add `"django_admin_grpc"` to `INSTALLED_APPS`
 - [ ] Convert each `GrpcDataClass` → `BaseGrpcResource` with specific field config classes
 - [ ] Convert each `GrpcServiceClient` → `BaseGrpcServiceAdapter`

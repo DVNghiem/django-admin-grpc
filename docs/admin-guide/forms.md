@@ -1,6 +1,6 @@
 # Forms
 
-Forms in django-grpc-admin are built automatically from field config definitions. You can customize widgets, override the entire form, or transform data before it reaches the adapter.
+Forms in django-admin-grpc are built automatically from field config definitions. You can customize widgets, override the entire form, or transform data before it reaches the adapter.
 
 ## Automatic Form Building
 

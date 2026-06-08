@@ -1,10 +1,10 @@
 # Architecture
 
-django-grpc-admin bridges Django Admin and remote gRPC services without requiring an ORM model or database table. This page explains how the pieces fit together.
+django-admin-grpc bridges Django Admin and remote gRPC services without requiring an ORM model or database table. This page explains how the pieces fit together.
 
 ## The Fake Model Pattern
 
-Django Admin is designed around Django models. It expects `model._meta`, `model.objects`, and `model.DoesNotExist` to exist. django-grpc-admin provides a **fake model** that satisfies these expectations while fetching data from a remote service.
+Django Admin is designed around Django models. It expects `model._meta`, `model.objects`, and `model.DoesNotExist` to exist. django-admin-grpc provides a **fake model** that satisfies these expectations while fetching data from a remote service.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -46,7 +46,7 @@ Django Admin is designed around Django models. It expects `model._meta`, `model.
 
 ### Why a fake model?
 
-Django Admin's internals rely heavily on `ModelAdmin` and its expectations around models, querysets, and fields. Rather than reimplementing all of Django Admin, django-grpc-admin creates a thin compatibility layer:
+Django Admin's internals rely heavily on `ModelAdmin` and its expectations around models, querysets, and fields. Rather than reimplementing all of Django Admin, django-admin-grpc creates a thin compatibility layer:
 
 - **`FakeModelMeta`** — simulates `model._meta` with `app_label`, `model_name`, `verbose_name`, `pk`, and `get_field()`
 - **`GrpcFakeQuerySet`** — a minimal queryset stand-in that supports `filter()`, `all()`, and iteration for admin actions
@@ -170,7 +170,7 @@ GrpcResourceAdmin.delete_view()
 
 ### Why not use a real Django model with `managed = False`?
 
-A `managed = False` model still requires a database connection and expects to run SQL queries. django-grpc-admin is designed for services where there is no database access at all — the data lives entirely in a remote microservice.
+A `managed = False` model still requires a database connection and expects to run SQL queries. django-admin-grpc is designed for services where there is no database access at all — the data lives entirely in a remote microservice.
 
 ### Why separate resources, adapters, and admin classes?
 

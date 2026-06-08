@@ -1,7 +1,7 @@
 """
 Django settings for example_project.
 
-Minimal configuration to demonstrate django-grpc-admin.
+Minimal configuration to demonstrate django-admin-grpc.
 """
 from pathlib import Path
 

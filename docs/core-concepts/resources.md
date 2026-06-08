@@ -1,6 +1,6 @@
 # Resources
 
-A **resource** in django-grpc-admin is a Python class that describes the shape of a remote entity. It tells Django Admin what columns exist, what types they are, and which field serves as the primary key.
+A **resource** in django-admin-grpc is a Python class that describes the shape of a remote entity. It tells Django Admin what columns exist, what types they are, and which field serves as the primary key.
 
 ## BaseGrpcResource
 

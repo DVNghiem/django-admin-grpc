@@ -1,6 +1,6 @@
 # List Views
 
-List views in django-grpc-admin work like standard Django Admin list views. You configure `list_display`, `list_filter`, `search_fields`, and pagination exactly as you would for an ORM-backed model.
+List views in django-admin-grpc work like standard Django Admin list views. You configure `list_display`, `list_filter`, `search_fields`, and pagination exactly as you would for an ORM-backed model.
 
 ## list_display
 

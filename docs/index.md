@@ -1,8 +1,8 @@
-# django-grpc-admin
+# django-admin-grpc
 
 **Django Admin backed by gRPC services — no ORM required.**
 
-Use django-grpc-admin to expose remote microservices inside Django Admin with full list, create, update, delete, and search support. You define a resource schema, wire a gRPC adapter, and register a single admin class — the package handles forms, pagination, filtering, and error mapping for you.
+Use django-admin-grpc to expose remote microservices inside Django Admin with full list, create, update, delete, and search support. You define a resource schema, wire a gRPC adapter, and register a single admin class — the package handles forms, pagination, filtering, and error mapping for you.
 
 ## Key Features
 
@@ -17,7 +17,7 @@ Use django-grpc-admin to expose remote microservices inside Django Admin with fu
 - **Customizable forms and widgets** — override any field's widget or the entire form
 - **Trace interceptor** — inject request IDs and trace headers into every gRPC call
 
-## When to Use django-grpc-admin
+## When to Use django-admin-grpc
 
 Use this package when you want to manage data from a remote service through Django Admin. Common scenarios include:
 
@@ -30,7 +30,7 @@ Use this package when you want to manage data from a remote service through Djan
 | Mixed ORM + gRPC stacks | Some models in Postgres, some entities in a remote service |
 
 !!! tip "Not sure if it's the right fit?"
-    If your data already lives in a Django-managed database, use Django's built-in `ModelAdmin`. If your data lives in a remote service accessible via gRPC, use django-grpc-admin.
+    If your data already lives in a Django-managed database, use Django's built-in `ModelAdmin`. If your data lives in a remote service accessible via gRPC, use django-admin-grpc.
 
 ## Quick Example
 

@@ -1,5 +1,5 @@
 """
-Settings helpers for django-grpc-admin.
+Settings helpers for django-admin-grpc.
 """
 from typing import Any
 
@@ -21,7 +21,7 @@ DEFAULTS: dict[str, Any] = {
 
 
 def get_setting(name: str) -> Any:
-    """Return a django-grpc-admin setting, falling back to the default.
+    """Return a django-admin-grpc setting, falling back to the default.
 
     If the resolved value is a dotted Python path string and the setting
     key ends with ``_CLASS`` or ``_TEMPLATE``, it is imported automatically.

@@ -1,4 +1,4 @@
-site_name: django-grpc-admin
+site_name: django-admin-grpc
 site_description: Django Admin backed by gRPC services
 site_author: Your Name
 site_url: https://DVNghiem.github.io/django-admin-grpc/
