@@ -1,0 +1,59 @@
+site_name: django-grpc-admin
+site_description: Django Admin backed by gRPC services
+site_author: Your Name
+site_url: https://yourorg.github.io/
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quickstart.md
+  - Core Concepts:
+    - Architecture: core-concepts/architecture.md
+    - Resources: core-concepts/resources.md
+    - Adapters: core-concepts/adapters.md
+    - Mappers: core-concepts/mappers.md
+  - Admin Guide:
+    - List Views: admin-guide/list-views.md
+    - Forms: admin-guide/forms.md
+    - Filters: admin-guide/filters.md
+    - Permissions: admin-guide/permissions.md
+    - Customization: admin-guide/customization.md
+  - Configuration: configuration.md
+  - Examples: examples.md
+  - API Reference:
+    - Resources: api/resources.md
+    - Adapters: api/adapters.md
+    - Admin: api/admin.md
+    - Filters: api/filters.md
+    - Forms: api/forms.md
+    - Exceptions: api/exceptions.md
+  - Migration Guide: migration.md
+  - Contributing: contributing.md
+
+markdown_extensions:
+  - admonition
+  - codehilite
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true

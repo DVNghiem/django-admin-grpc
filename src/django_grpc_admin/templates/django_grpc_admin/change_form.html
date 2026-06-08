@@ -1,0 +1,130 @@
+{% extends "admin/change_form.html" %}
+{% load admin_urls i18n %}
+
+{% block content %}
+<div class="grpc-change-form">
+    {% if original %}
+    <h1>{{ title }}</h1>
+    <div class="grpc-detail-section">
+        <h2>{% trans "Details" %}</h2>
+        <table class="detail-table">
+            <tbody>
+                {% for row in detail_rows %}
+                <tr>
+                    <th>{{ row.label }}</th>
+                    <td>
+                        {% if row.is_boolean %}
+                            {{ row.value|yesno:"Yes,No" }}
+                        {% else %}
+                            {{ row.value|default:"-" }}
+                        {% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="2">{% trans "No detail data available." %}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    {% if add or can_edit %}
+    <div class="grpc-form-section">
+        <h2>
+            {% if add %}
+                {% trans "Create" %}
+            {% else %}
+                {% trans "Edit" %}
+            {% endif %}
+        </h2>
+        <form method="post" novalidate>
+            {% csrf_token %}
+            {% if form.non_field_errors %}
+            <div class="errornote">{{ form.non_field_errors }}</div>
+            {% endif %}
+            <fieldset class="module aligned">
+                {% for field in form %}
+                <div class="form-row{% if field.errors %} errors{% endif %}">
+                    {{ field.errors }}
+                    {{ field.label_tag }}
+                    {{ field }}
+                    {% if field.help_text %}
+                    <div class="help">{{ field.help_text }}</div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </fieldset>
+            <div class="submit-row">
+                <input type="submit" value="{% if add %}{% trans 'Save' %}{% else %}{% trans 'Save changes' %}{% endif %}" class="default">
+            </div>
+        </form>
+    </div>
+    {% endif %}
+
+    <div class="grpc-actions">
+        <a href="{% url opts|admin_urlname:'changelist' %}">{% trans "Back to list" %}</a>
+        {% if original and can_delete %}
+        <span class="separator">|</span>
+        <a href="{% url opts|admin_urlname:'delete' original.pk|admin_urlquote %}" class="deletelink">{% trans "Delete" %}</a>
+        {% endif %}
+    </div>
+</div>
+
+<style>
+    .grpc-change-form {
+        --grpc-section-bg: #f5f5f5;
+        --grpc-section-border: #ddd;
+        --grpc-table-header-bg: #fafafa;
+        --grpc-table-border: #e0e0e0;
+        --grpc-text-muted: #666;
+        --grpc-separator: #999;
+        margin: 20px 0;
+    }
+
+    @media (prefers-color-scheme: dark) {
+        .grpc-change-form {
+            --grpc-section-bg: #2d2d2d;
+            --grpc-section-border: #444;
+            --grpc-table-header-bg: #333;
+            --grpc-table-border: #444;
+            --grpc-text-muted: #aaa;
+            --grpc-separator: #777;
+        }
+    }
+
+    .grpc-detail-section h2,
+    .grpc-form-section h2 {
+        background-color: var(--grpc-section-bg);
+        padding: 10px;
+        margin-top: 20px;
+        border-bottom: 2px solid var(--grpc-section-border);
+    }
+    .detail-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 10px 0;
+    }
+    .detail-table th {
+        background-color: var(--grpc-table-header-bg);
+        text-align: left;
+        padding: 8px;
+        width: 25%;
+        border: 1px solid var(--grpc-table-border);
+        font-weight: normal;
+        color: var(--grpc-text-muted);
+    }
+    .detail-table td {
+        padding: 8px;
+        border: 1px solid var(--grpc-table-border);
+    }
+    .grpc-actions {
+        margin-top: 20px;
+    }
+    .grpc-actions .separator {
+        margin: 0 8px;
+        color: var(--grpc-separator);
+    }
+</style>
+{% endblock %}

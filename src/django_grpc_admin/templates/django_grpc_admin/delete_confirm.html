@@ -1,0 +1,41 @@
+{% extends "admin/base_site.html" %}
+{% load admin_urls i18n %}
+
+{% block content %}
+<div class="delete-confirmation">
+    <h1>{% blocktrans with name=object_name %}Delete {{ name }}{% endblocktrans %}</h1>
+    <p>{% blocktrans with object=original %}Are you sure you want to delete "{{ object }}"?{% endblocktrans %}</p>
+
+    <form method="post">
+        {% csrf_token %}
+        <div class="submit-row">
+            <input type="submit" value="{% trans 'Yes, I'm sure' %}" class="deletelink">
+            <a href="{% url opts|admin_urlname:'change' object_id|admin_urlquote %}" class="button cancel-link">{% trans "Cancel" %}</a>
+        </div>
+    </form>
+</div>
+
+<style>
+    .delete-confirmation {
+        --grpc-confirm-border: #ddd;
+        --grpc-confirm-bg: #fff;
+        padding: 20px;
+        border: 1px solid var(--grpc-confirm-border);
+        border-radius: 4px;
+    }
+
+    @media (prefers-color-scheme: dark) {
+        .delete-confirmation {
+            --grpc-confirm-border: #444;
+            --grpc-confirm-bg: transparent;
+        }
+    }
+
+    .delete-confirmation h1 {
+        margin-top: 0;
+    }
+    .delete-confirmation .submit-row {
+        margin-top: 20px;
+    }
+</style>
+{% endblock %}
