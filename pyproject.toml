@@ -10,7 +10,7 @@ readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.12"
 authors = [
-    { name = "Your Name", email = "you@example.com" },
+    {name = "Dang Van Nghiem",email = "vannghiem848@gmail.com"}
 ]
 keywords = ["django", "grpc", "admin", "microservices"]
 classifiers = [
@@ -41,6 +41,7 @@ dev = [
     "pytest-django>=4.5",
     "pytest-cov>=4.0",
     "mypy>=1.5",
+    "django-stubs>=5.0",
     "ruff>=0.1.0",
 ]
 
@@ -73,6 +74,10 @@ warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
 ignore_missing_imports = true
+plugins = ["mypy_django_plugin.main"]
+
+[tool.django-stubs]
+django_settings_module = "tests.settings"
 
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "tests.settings"
