@@ -150,7 +150,6 @@ class FakeModelMeta:
             bf.editable = False
             bf.hidden = False
             bf.primary_key = False
-            bf.unique = False
             bf.remote_field = None
             bf.empty_values = [None, ""]
             return bf
