@@ -490,7 +490,8 @@ class TestGrpcResourceAdminResolveFk:
 
     def test_falsy_fk_id_returns_fk_id(self, admin_instance):
         config = FKFieldConfig(name="category_id", model="auth.User")
-        assert admin_instance.resolve_fk_value("category_id", config, "") == ""
+        # Empty string with a model configured triggers lookup which fails → None
+        assert admin_instance.resolve_fk_value("category_id", config, "") is None
         assert admin_instance.resolve_fk_value("category_id", config, None) is None
 
     def test_invalid_model_path(self, admin_instance):

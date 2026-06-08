@@ -29,15 +29,18 @@ class ModelPKChoiceField(forms.ModelChoiceField):
     def to_python(self, value: Any) -> Any:
         if not value:
             return None
+        qs = self.queryset
+        if qs is None:
+            return None
         try:
-            obj = self.queryset.get(
+            obj = qs.get(
                 **{self.to_field_name or "pk": value}
             )
             pk = obj.pk
             if isinstance(pk, (int, str)) and str(pk).lstrip("-").isdigit():
                 return int(pk)
             return pk
-        except (self.queryset.model.DoesNotExist, ValueError, TypeError):
+        except (qs.model.DoesNotExist, ValueError, TypeError):
             raise forms.ValidationError(
                 self.error_messages["invalid_choice"],
                 code="invalid_choice",

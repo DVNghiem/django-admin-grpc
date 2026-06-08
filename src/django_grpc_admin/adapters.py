@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, cast
 
 import grpc
 
@@ -132,7 +133,7 @@ class BaseGrpcServiceAdapter(ABC):
             channel, TraceClientInterceptor(trace_context_provider=provider)
         )
 
-    def _trace_context_provider(self):
+    def _trace_context_provider(self) -> Callable[[], dict[str, str]]:
         """Return the configured trace-context callable, or a no-op."""
         from django_grpc_admin.settings import get_setting
 
@@ -140,11 +141,11 @@ class BaseGrpcServiceAdapter(ABC):
         if provider is None:
             return lambda: {}
         if callable(provider):
-            return provider
+            return cast(Callable[[], dict[str, str]], provider)
         # Django-style dotted path
         from django.utils.module_loading import import_string
 
-        return import_string(provider)
+        return cast(Callable[[], dict[str, str]], import_string(provider))
 
     @staticmethod
     def _map_rpc_error(exc: grpc.RpcError) -> Exception:

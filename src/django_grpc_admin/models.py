@@ -4,10 +4,14 @@ Fake Django model infrastructure so that ``ModelAdmin`` can work without ORM tab
 from __future__ import annotations
 
 import logging
-from typing import Any
+from collections.abc import Iterator
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from django.apps import apps
 from django.core.exceptions import FieldDoesNotExist
+
+if TYPE_CHECKING:
+    from django_grpc_admin.resources import BaseGrpcResource
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +23,7 @@ class FakeModelMeta:
 
     def __init__(
         self,
-        resource_class: type,
+        resource_class: type[BaseGrpcResource],
         app_label: str,
         model_name: str,
         verbose_name: str,
@@ -221,7 +225,7 @@ class GrpcFakeQuerySet:
     def none(self) -> GrpcFakeQuerySet:
         return GrpcFakeQuerySet(self.model)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[Any]:
         return iter(self._result_cache)
 
     def __len__(self) -> int:
@@ -229,6 +233,16 @@ class GrpcFakeQuerySet:
 
     def __bool__(self) -> bool:
         return True
+
+
+class FakeModelBase:
+    """Base class for dynamically-created fake Django model classes."""
+
+    _meta: ClassVar[FakeModelMeta]
+    _default_manager: ClassVar[GrpcFakeQuerySet]
+    objects: ClassVar[GrpcFakeQuerySet]
+    DoesNotExist: ClassVar[type[Exception]]
+    MultipleObjectsReturned: ClassVar[type[Exception]]
 
 
 class ModelWrapper:
@@ -260,8 +274,8 @@ class ModelWrapper:
 
     def __eq__(self, other: object) -> bool:
         if isinstance(other, ModelWrapper):
-            return self._instance == other._instance
-        return self._instance == other
+            return bool(self._instance == other._instance)
+        return bool(self._instance == other)
 
     def __hash__(self) -> int:
         try:

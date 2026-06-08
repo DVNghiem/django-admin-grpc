@@ -8,7 +8,7 @@ metadata and ``BaseGrpcServiceAdapter`` for transport.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlencode
 
 from django.apps import apps
@@ -22,6 +22,10 @@ from django.urls import reverse
 
 from django_grpc_admin.models import GrpcFakeQuerySet, ModelWrapper
 from django_grpc_admin.paginator import GrpcPaginator, PagedResult
+
+if TYPE_CHECKING:
+    from django_grpc_admin.adapters import BaseGrpcServiceAdapter
+    from django_grpc_admin.resources import BaseGrpcResource
 
 logger = logging.getLogger(__name__)
 
@@ -54,8 +58,8 @@ class GrpcChangeList(ChangeList):
         super().__init__(
             request,
             model,
-            list_display,
-            list_display_links,
+            list_display,  # type: ignore[arg-type]
+            list_display_links,  # type: ignore[arg-type]
             list_filter,
             date_hierarchy,
             search_fields,
@@ -86,8 +90,8 @@ class GrpcChangeList(ChangeList):
                 if isinstance(list_filter_item, type) and issubclass(
                     list_filter_item, SimpleListFilter
                 ):
-                    filter_spec = list_filter_item(
-                        request, params, self.model, self.model_admin
+                    filter_spec: Any = list_filter_item(
+                        request, params, self.model, self.model_admin  # type: ignore[arg-type]
                     )
                     filter_specs.append(filter_spec)
                     continue
@@ -96,17 +100,19 @@ class GrpcChangeList(ChangeList):
                     field_path = list_filter_item
                     filter_config: dict[str, Any] = {}
 
-                    if hasattr(self.model_admin, "grpc_filter_config"):
-                        gfc = self.model_admin.grpc_filter_config
+                    model_admin = cast(GrpcResourceAdmin, self.model_admin)
+                    rc = model_admin.resource_class
+                    if rc is None:
+                        continue
+                    if hasattr(model_admin, "grpc_filter_config"):
+                        gfc = model_admin.grpc_filter_config
                         if isinstance(gfc, dict) and field_path not in gfc:
                             continue
                         if isinstance(gfc, dict):
                             filter_config = gfc.get(field_path, {})
                         else:
                             # list format
-                            fc = self.model_admin.resource_class.get_field_config(
-                                field_path
-                            )
+                            fc = rc.get_field_config(field_path)
                             filter_config = {"type": fc.type if fc else "text"}
 
                     field_type = filter_config.get("type", "text")
@@ -132,7 +138,7 @@ class GrpcChangeList(ChangeList):
                             filter_spec = filter_class(
                                 fake_field,
                                 request,
-                                params,
+                                params,  # type: ignore[arg-type]
                                 self.model,
                                 self.model_admin,
                                 field_path,
@@ -160,7 +166,7 @@ class GrpcChangeList(ChangeList):
                             filter_spec = GrpcTextInputFilter(
                                 fake_field,
                                 request,
-                                params,
+                                params,  # type: ignore[arg-type]
                                 self.model,
                                 self.model_admin,
                                 field_path,
@@ -192,7 +198,9 @@ class GrpcChangeList(ChangeList):
             has_active_filters,
         )
 
-    def get_queryset(self, request: HttpRequest) -> list:
+    def get_queryset(  # type: ignore[override]
+        self, request: HttpRequest
+    ) -> list[Any]:
         return []
 
     def get_results(self, request: HttpRequest) -> None:
@@ -242,7 +250,7 @@ class GrpcChangeList(ChangeList):
                     params.pop("p", None)
                     self.cursor_next_url = "?" + urlencode(params)
                 else:
-                    self.cursor_next_url = None
+                    self.cursor_next_url = None  # type: ignore[assignment]
                 from django_grpc_admin.settings import get_setting
 
                 self.paginator.template_name = (
@@ -259,7 +267,7 @@ class GrpcChangeList(ChangeList):
             self.multi_page = False
             self.paginator = GrpcPaginator([], page_size, 0)
             if getattr(self._grpc_model_admin, "grpc_cursor_pagination", False):
-                self.cursor_next_url = None
+                self.cursor_next_url = None  # type: ignore[assignment]
             messages.info(request, "No data found or error fetching data.")
 
 
@@ -282,9 +290,9 @@ class GrpcResourceAdmin(ModelAdmin):
     * ``grpc_cursor_pagination`` – use cursor-based pagination.
     """
 
-    resource_class: type[Any] = None
+    resource_class: type[BaseGrpcResource] | None = None
     service_name: str = ""
-    adapter_class: type[Any] | None = None
+    adapter_class: type[BaseGrpcServiceAdapter] | None = None
 
     verbose_name: str = ""
     verbose_name_plural: str = ""
@@ -296,13 +304,16 @@ class GrpcResourceAdmin(ModelAdmin):
     grpc_detail_fields: list[Any] = []
     grpc_cursor_pagination: bool = False
 
-    def __init__(self, model=None, admin_site=None) -> None:
+    def __init__(
+        self, model: type[Any] | None = None, admin_site: Any | None = None
+    ) -> None:
         if self.resource_class is None:
             raise ValueError(
                 f"{self.__class__.__name__} must define resource_class"
             )
-        self._fake_model = self.resource_class.admin_model()
-        super().__init__(self._fake_model, admin_site)
+        self._resource_class: type[BaseGrpcResource] = self.resource_class
+        self._fake_model = self._resource_class.admin_model()
+        super().__init__(self._fake_model, admin_site)  # type: ignore[arg-type]
 
     # ── Template resolution ────────────────────────────────────────────────
 
@@ -314,14 +325,16 @@ class GrpcResourceAdmin(ModelAdmin):
         2. ``GRPC_ADMIN['DEFAULT_CHANGE_FORM_TEMPLATE']``
         3. Package default
         """
-        resource_template = getattr(self.resource_class.Meta, "change_form_template", "")
+        resource_template = getattr(
+            self._resource_class.Meta, "change_form_template", ""
+        )
         if resource_template:
-            return resource_template
+            return cast(str, resource_template)
         from django_grpc_admin.settings import get_setting
 
         setting_template = get_setting("DEFAULT_CHANGE_FORM_TEMPLATE")
         if setting_template:
-            return setting_template
+            return cast(str, setting_template)
         return "django_grpc_admin/change_form.html"
 
     def _get_delete_confirm_template(self) -> str:
@@ -332,18 +345,20 @@ class GrpcResourceAdmin(ModelAdmin):
         2. ``GRPC_ADMIN['DEFAULT_DELETE_CONFIRM_TEMPLATE']``
         3. Package default
         """
-        resource_template = getattr(self.resource_class.Meta, "delete_confirm_template", "")
+        resource_template = getattr(
+            self._resource_class.Meta, "delete_confirm_template", ""
+        )
         if resource_template:
-            return resource_template
+            return cast(str, resource_template)
         from django_grpc_admin.settings import get_setting
 
         setting_template = get_setting("DEFAULT_DELETE_CONFIRM_TEMPLATE")
         if setting_template:
-            return setting_template
+            return cast(str, setting_template)
         return "django_grpc_admin/delete_confirm.html"
 
     @classmethod
-    def with_base(cls, base_admin_class: type):
+    def with_base(cls, base_admin_class: type) -> type[Any]:
         """Return a new admin class that inherits from the given base.
 
         Usage::
@@ -363,7 +378,7 @@ class GrpcResourceAdmin(ModelAdmin):
         actions = super().get_actions(request)
         actions.pop("delete_selected", None)
         if self._can_delete():
-            actions["grpc_delete_selected"] = (
+            actions["grpc_delete_selected"] = (  # type: ignore[assignment]
                 self.__class__._grpc_delete_selected,
                 "grpc_delete_selected",
                 "Delete selected %(verbose_name_plural)s",
@@ -382,7 +397,7 @@ class GrpcResourceAdmin(ModelAdmin):
             return
         for pk in selected_pks:
             try:
-                adapter.delete(self.resource_class, pk=pk)
+                adapter.delete(self._resource_class, pk=pk)
                 deleted += 1
             except Exception as exc:
                 logger.warning("gRPC delete failed for pk=%s: %s", pk, exc)
@@ -392,11 +407,11 @@ class GrpcResourceAdmin(ModelAdmin):
         if errors:
             messages.error(request, f"Failed to delete {errors} record(s).")
 
-    _grpc_delete_selected.short_description = "Delete selected records"
+    _grpc_delete_selected.short_description = "Delete selected records"  # type: ignore[attr-defined]
 
     # ── Adapter plumbing ───────────────────────────────────────────────────
 
-    def get_adapter(self):
+    def get_adapter(self) -> BaseGrpcServiceAdapter | None:
         """Return the gRPC adapter for this admin."""
         if self.adapter_class is not None:
             # Instantiate if it is a class
@@ -409,11 +424,13 @@ class GrpcResourceAdmin(ModelAdmin):
             return adapter_registry.get_adapter(self.service_name)
         return None
 
-    def get_changelist(self, request, **kwargs):
+    def get_changelist(self, request: HttpRequest, **kwargs: Any) -> type[GrpcChangeList]:
         return GrpcChangeList
 
-    def get_queryset(self, request: HttpRequest):
-        return GrpcFakeQuerySet(self.resource_class)
+    def get_queryset(  # type: ignore[override]
+        self, request: HttpRequest
+    ) -> GrpcFakeQuerySet:
+        return GrpcFakeQuerySet(self._resource_class)
 
     def get_grpc_filters(self, request: HttpRequest) -> dict[str, Any]:
         filters: dict[str, Any] = {}
@@ -452,13 +469,13 @@ class GrpcResourceAdmin(ModelAdmin):
             kwargs["page"] = page
             kwargs["page_size"] = page_size
 
-        return adapter.list(self.resource_class, **kwargs)
+        return adapter.list(self._resource_class, **kwargs)
 
     def fetch_one(self, pk: str) -> ModelWrapper | None:
         adapter = self.get_adapter()
         if adapter is None:
             return None
-        instance = adapter.get(self.resource_class, pk=pk)
+        instance = adapter.get(self._resource_class, pk=pk)
         if instance is None:
             return None
         return ModelWrapper(instance, self._fake_model._meta)
@@ -492,23 +509,29 @@ class GrpcResourceAdmin(ModelAdmin):
     def has_add_permission(self, request: HttpRequest) -> bool:
         return self.grpc_enable_create and self._can_create()
 
-    def has_change_permission(self, request: HttpRequest, obj=None) -> bool:
+    def has_change_permission(
+        self, request: HttpRequest, obj: Any = None
+    ) -> bool:
         return self.has_view_permission(request, obj=obj)
 
-    def has_delete_permission(self, request: HttpRequest, obj=None) -> bool:
+    def has_delete_permission(
+        self, request: HttpRequest, obj: Any = None
+    ) -> bool:
         return self._can_delete()
 
-    def has_view_permission(self, request: HttpRequest, obj=None) -> bool:
+    def has_view_permission(
+        self, request: HttpRequest, obj: Any = None
+    ) -> bool:
         return True
 
     # ── Forms ──────────────────────────────────────────────────────────────
 
-    def _build_form_class(self):
+    def _build_form_class(self) -> type[Any]:
         from django_grpc_admin.forms import FormBuilder
         from django_grpc_admin.widgets import get_default_widgets
 
         return FormBuilder.build(
-            self.resource_class,
+            self._resource_class,
             widgets=get_default_widgets(),
             field_names=self.grpc_form_fields or None,
         )
@@ -536,17 +559,14 @@ class GrpcResourceAdmin(ModelAdmin):
                 and len(self.grpc_detail_fields[0]) == 2
             ):
                 return list(self.grpc_detail_fields)
-            return [
-                (
-                    self.resource_class.get_field_config(fn).label
-                    if self.resource_class.get_field_config(fn)
-                    else fn.replace("_", " ").title(),
-                    fn,
-                )
-                for fn in self.grpc_detail_fields
-            ]
+            fields: list[tuple[str, str]] = []
+            for fn in self.grpc_detail_fields:
+                fc = self._resource_class.get_field_config(str(fn))
+                label = str(fc.label) if fc is not None else str(fn).replace("_", " ").title()
+                fields.append((label, str(fn)))
+            return fields
         return [
-            (fc.label, fc.name) for fc in self.resource_class.get_field_configs()
+            (fc.label or fc.name, fc.name) for fc in self._resource_class.get_field_configs()
         ]
 
     def get_grpc_detail_rows(self, obj: Any) -> list[dict[str, Any]]:
@@ -555,7 +575,7 @@ class GrpcResourceAdmin(ModelAdmin):
         rows: list[dict[str, Any]] = []
         for label, field_name in self.get_grpc_detail_fields():
             value = getattr(obj, field_name, None)
-            config = self.resource_class.get_field_config(field_name)
+            config = self._resource_class.get_field_config(field_name)
             is_fk = config is not None and isinstance(config, FKFieldConfig)
             resolved_value = value
             if is_fk and value is not None:
@@ -582,13 +602,13 @@ class GrpcResourceAdmin(ModelAdmin):
         from django_grpc_admin.resources import FKFieldConfig
 
         if config is None or not isinstance(config, FKFieldConfig):
-            return fk_id
+            return fk_id if fk_id is not None else None  # type: ignore[return-value]
         if not fk_id:
-            return fk_id
+            return None
 
         # Django model lookup
         if getattr(config, "model", None):
-            model_path = config.model
+            model_path = cast(str, config.model)
             try:
                 app_label, model_name = model_path.split(".")
                 model = apps.get_model(app_label, model_name)
@@ -618,7 +638,7 @@ class GrpcResourceAdmin(ModelAdmin):
 
         # gRPC service lookup
         if getattr(config, "service", None):
-            service = config.service
+            service = cast(str, config.service)
             display_field = getattr(config, "display_field", "")
             get_method = getattr(config, "get_method", "get")
             try:
@@ -651,19 +671,24 @@ class GrpcResourceAdmin(ModelAdmin):
                 )
                 return None
 
-        return fk_id
+        return str(fk_id) if fk_id is not None else None
 
     # ── Object retrieval ───────────────────────────────────────────────────
 
     def get_object(
-        self, request: HttpRequest, object_id: str, from_field=None
+        self,
+        request: HttpRequest,
+        object_id: str,
+        from_field: str | None = None,
     ) -> ModelWrapper | None:
         return self.fetch_one(str(object_id))
 
     # ── Views ──────────────────────────────────────────────────────────────
 
     def changelist_view(
-        self, request: HttpRequest, extra_context=None
+        self,
+        request: HttpRequest,
+        extra_context: dict[str, Any] | None = None,
     ) -> TemplateResponse:
         extra_context = extra_context or {}
         action = (
@@ -677,15 +702,18 @@ class GrpcResourceAdmin(ModelAdmin):
         response = super().changelist_view(request, extra_context)
         if self.grpc_cursor_pagination:
             if not hasattr(response, "context_data"):
-                return response
+                return response  # type: ignore[return-value]
             cl = response.context_data.get("cl")
             if cl and hasattr(cl, "cursor_next_url"):
                 response.context_data["cursor_next_url"] = cl.cursor_next_url
-        return response
+        return response  # type: ignore[return-value]
 
     def add_view(
-        self, request: HttpRequest, form_url="", extra_context=None
-    ) -> TemplateResponse:
+        self,
+        request: HttpRequest,
+        form_url: str = "",
+        extra_context: dict[str, Any] | None = None,
+    ) -> TemplateResponse | HttpResponseRedirect:
         if not self.has_add_permission(request):
             raise PermissionDenied
 
@@ -695,8 +723,15 @@ class GrpcResourceAdmin(ModelAdmin):
             if form.is_valid():
                 try:
                     adapter = self.get_adapter()
+                    if adapter is None:
+                        messages.error(request, "gRPC adapter not available.")
+                        return HttpResponseRedirect(
+                            reverse(
+                                f"admin:{self._fake_model._meta.app_label}_{self._fake_model._meta.model_name}_changelist"
+                            )
+                        )
                     adapter.create(
-                        self.resource_class,
+                        self._resource_class,
                         self.get_grpc_create_data(form.cleaned_data),
                     )
                     messages.success(
@@ -751,15 +786,22 @@ class GrpcResourceAdmin(ModelAdmin):
         )
 
     def change_view(
-        self, request: HttpRequest, object_id: str, form_url="", extra_context=None
-    ) -> TemplateResponse:
+        self,
+        request: HttpRequest,
+        object_id: str,
+        form_url: str = "",
+        extra_context: dict[str, Any] | None = None,
+    ) -> TemplateResponse | HttpResponseRedirect:
         if not self.has_view_permission(request):
             raise PermissionDenied
 
         obj = self.get_object(request, object_id)
         if obj is None:
-            return self._get_obj_does_not_exist_redirect(
-                request, self._fake_model._meta, object_id
+            return cast(
+                HttpResponseRedirect,
+                self._get_obj_does_not_exist_redirect(  # type: ignore[attr-defined]
+                    request, self._fake_model._meta, object_id
+                ),
             )
 
         can_edit = self._can_update()
@@ -774,8 +816,11 @@ class GrpcResourceAdmin(ModelAdmin):
             if form.is_valid():
                 try:
                     adapter = self.get_adapter()
+                    if adapter is None:
+                        messages.error(request, "gRPC adapter not available.")
+                        return HttpResponseRedirect(request.path)
                     adapter.update(
-                        self.resource_class,
+                        self._resource_class,
                         str(obj.pk),
                         self.get_grpc_update_data(obj, form.cleaned_data),
                     )
@@ -827,21 +872,34 @@ class GrpcResourceAdmin(ModelAdmin):
         )
 
     def delete_view(
-        self, request: HttpRequest, object_id: str, extra_context=None
-    ) -> TemplateResponse:
+        self,
+        request: HttpRequest,
+        object_id: str,
+        extra_context: dict[str, Any] | None = None,
+    ) -> TemplateResponse | HttpResponseRedirect:
         if not self.has_delete_permission(request):
             raise PermissionDenied
 
         obj = self.get_object(request, object_id)
         if obj is None:
-            return self._get_obj_does_not_exist_redirect(
-                request, self._fake_model._meta, object_id
+            return cast(
+                HttpResponseRedirect,
+                self._get_obj_does_not_exist_redirect(  # type: ignore[attr-defined]
+                    request, self._fake_model._meta, object_id
+                ),
             )
 
         if request.method == "POST":
             try:
                 adapter = self.get_adapter()
-                deleted = adapter.delete(self.resource_class, str(obj.pk))
+                if adapter is None:
+                    messages.error(request, "gRPC adapter not available.")
+                    return HttpResponseRedirect(
+                        reverse(
+                            f"admin:{self._fake_model._meta.app_label}_{self._fake_model._meta.model_name}_changelist"
+                        )
+                    )
+                deleted = adapter.delete(self._resource_class, str(obj.pk))
                 if deleted:
                     messages.success(
                         request,

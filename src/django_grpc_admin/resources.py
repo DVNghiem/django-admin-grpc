@@ -10,7 +10,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
-from django_grpc_admin.models import FakeModelMeta, GrpcFakeQuerySet
+from django_grpc_admin.models import FakeModelBase, FakeModelMeta, GrpcFakeQuerySet
 
 logger = logging.getLogger(__name__)
 
@@ -215,7 +215,7 @@ class BaseGrpcResource:
         return cls(**kwargs)
 
     @classmethod
-    def admin_model(cls) -> type:
+    def admin_model(cls) -> type[FakeModelBase]:
         """
         Create a fake Django model class for admin compatibility.
 
@@ -229,11 +229,11 @@ class BaseGrpcResource:
         verbose_name_plural = getattr(meta, "verbose_name_plural", "") or f"{verbose_name}s"
         pk_field = getattr(meta, "pk_field", "") or "id"
 
-        class FakeModel:
+        class FakeModel(FakeModelBase):
             pass
 
         FakeModel.__name__ = cls.__name__
-        FakeModel._meta = FakeModelMeta(
+        FakeModel._meta = FakeModelMeta(  # type: ignore[attr-defined]
             resource_class=cls,
             app_label=app_label,
             model_name=model_name,
@@ -241,10 +241,10 @@ class BaseGrpcResource:
             verbose_name_plural=verbose_name_plural,
             pk_field_name=pk_field,
         )
-        FakeModel._default_manager = GrpcFakeQuerySet(cls)
-        FakeModel.objects = GrpcFakeQuerySet(cls)
-        FakeModel.DoesNotExist = type("DoesNotExist", (Exception,), {})
-        FakeModel.MultipleObjectsReturned = type(
+        FakeModel._default_manager = GrpcFakeQuerySet(cls)  # type: ignore[attr-defined]
+        FakeModel.objects = GrpcFakeQuerySet(cls)  # type: ignore[attr-defined]
+        FakeModel.DoesNotExist = type("DoesNotExist", (Exception,), {})  # type: ignore[attr-defined]
+        FakeModel.MultipleObjectsReturned = type(  # type: ignore[attr-defined]
             "MultipleObjectsReturned", (Exception,), {}
         )
 

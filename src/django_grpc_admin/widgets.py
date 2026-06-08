@@ -30,5 +30,5 @@ def get_default_widgets() -> dict[str, type[forms.Widget]]:
 
     custom = get_setting("DEFAULT_WIDGETS")
     if custom:
-        return custom
+        return custom  # type: ignore[no-any-return]
     return DEFAULT_WIDGETS

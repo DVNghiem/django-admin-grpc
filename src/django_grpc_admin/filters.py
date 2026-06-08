@@ -34,10 +34,10 @@ class GrpcFieldListFilter(FieldListFilter):
         ) or field_path.replace("_", " ").title()
         # Bypass FieldListFilter.__init__ to avoid DB lookups
         super(FieldListFilter, self).__init__(
-            request, params, model, model_admin
+            request, params, model, model_admin  # type: ignore[arg-type]
         )
 
-    def expected_parameters(self) -> list[str]:
+    def expected_parameters(self) -> list[str | None]:
         return [self.field_path, f"{self.field_path}__exact"]
 
     def choices(self, changelist: Any) -> Any:
@@ -60,7 +60,7 @@ class GrpcBooleanFieldListFilter(GrpcFieldListFilter):
         self.lookup_kwarg = f"{field_path}__exact"
         self.lookup_val = request.GET.get(self.lookup_kwarg)
 
-    def expected_parameters(self) -> list[str]:
+    def expected_parameters(self) -> list[str | None]:
         return [self.lookup_kwarg]
 
     def choices(self, changelist: Any) -> Any:
@@ -99,7 +99,7 @@ class GrpcChoicesFieldListFilter(GrpcFieldListFilter):
         self.lookup_val = request.GET.get(self.lookup_kwarg)
         self._choices = choices or []
 
-    def expected_parameters(self) -> list[str]:
+    def expected_parameters(self) -> list[str | None]:
         return [self.lookup_kwarg]
 
     def choices(self, changelist: Any) -> Any:
@@ -167,7 +167,7 @@ class GrpcTextInputFilter(FieldListFilter):
         self.lookup_kwarg = field_path
         self.lookup_val = params.get(self.lookup_kwarg, "")
         super(FieldListFilter, self).__init__(
-            request, params, model, model_admin
+            request, params, model, model_admin  # type: ignore[arg-type]
         )
         if self.lookup_val:
             self.used_parameters[self.lookup_kwarg] = self.lookup_val
@@ -176,7 +176,11 @@ class GrpcTextInputFilter(FieldListFilter):
     def title(self) -> str:
         return self._label
 
-    def expected_parameters(self) -> list[str]:
+    @title.setter
+    def title(self, value: str) -> None:
+        self._label = value
+
+    def expected_parameters(self) -> list[str | None]:
         return [self.lookup_kwarg]
 
     def has_output(self) -> bool:
@@ -228,10 +232,10 @@ def create_grpc_filter_spec(
                 else "-"
             )
             super(FieldListFilter, self).__init__(
-                request, params, model, model_admin_instance
+                request, params, model, model_admin_instance  # type: ignore[arg-type]
             )
 
-        def expected_parameters(self) -> list[str]:
+        def expected_parameters(self) -> list[str | None]:
             return [self.lookup_kwarg]
 
         def has_output(self) -> bool:
