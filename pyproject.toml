@@ -17,8 +17,10 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Web Environment",
     "Framework :: Django",
-    "Framework :: Django :: 4.2",
     "Framework :: Django :: 5.0",
+    "Framework :: Django :: 5.1",
+    "Framework :: Django :: 5.2",
+    "Framework :: Django :: 6.0",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
@@ -29,7 +31,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "Django>=4.2",
+    "Django>=5.0,<7.0",
     "grpcio>=1.50.0",
 ]
 
@@ -59,14 +61,14 @@ include = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM"]
 ignore = ["E501"]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true

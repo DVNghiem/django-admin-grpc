@@ -2,8 +2,8 @@
 
 ## Requirements
 
-- Python 3.10 or later
-- Django 4.2 or later
+- Python 3.12 or later
+- Django 5.0 or later
 - grpcio 1.50.0 or later
 
 ## Install from PyPI

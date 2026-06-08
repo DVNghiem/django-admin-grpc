@@ -4,7 +4,7 @@ Django Admin backed by gRPC services — no ORM required.
 
 [![PyPI version](https://badge.fury.io/py/django-grpc-admin.svg)](https://pypi.org/project/django-grpc-admin/)
 ![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)
-![Django versions](https://img.shields.io/badge/django-4.2%20%7C%205.0-blue)
+![Django versions](https://img.shields.io/badge/django-5.x%20%7C%206.x-blue)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![CI](https://github.com/DVNghiem/django-grpc-admin/actions/workflows/ci.yml/badge.svg)](https://github.com/DVNghiem/django-grpc-admin/actions/workflows/ci.yml)
 
