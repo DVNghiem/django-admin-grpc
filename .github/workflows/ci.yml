@@ -32,7 +32,7 @@ jobs:
         run: ruff check src/ tests/ example/
 
       - name: Run tests with coverage
-        run: pytest --cov=django_grpc_admin --cov-report=xml --cov-report=term
+        run: python -m pytest --cov=django_grpc_admin --cov-report=xml --cov-report=term
 
       - name: Upload coverage to Codecov
         if: matrix.python-version == '3.13' && matrix.django-version == '6.0'
