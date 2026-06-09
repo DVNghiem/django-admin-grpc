@@ -227,6 +227,40 @@ Change view. Fetches object, builds form, validates POST, calls `adapter.update(
 
 Delete view. Fetches object, confirms POST, calls `adapter.delete()`.
 
+## `grpc_action`
+
+Decorator for gRPC admin actions. Wraps a method so it receives
+``selected_pks`` (a list of primary keys) instead of a Django queryset.
+
+```python
+from django_admin_grpc.admin import GrpcResourceAdmin, grpc_action
+from django.contrib import messages
+
+class ProductAdmin(GrpcResourceAdmin):
+    actions = ["activate_selected"]
+
+    @grpc_action(description="Activate selected products")
+    def activate_selected(self, request, selected_pks):
+        updated, errors = self.apply_grpc_bulk_update(
+            request, selected_pks, {"active": True}
+        )
+        if updated:
+            messages.success(request, f"Activated {updated} product(s).")
+```
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `description` | `str` | `""` | Label shown in the action dropdown. Defaults to the method name. |
+| `permissions` | `list[str]` | `None` | Permission codenames required to use this action. |
+
+### Compatibility
+
+- Standard Django ``@admin.action`` still works alongside ``@grpc_action``.
+- ``apply_grpc_bulk_update`` accepts either a queryset or a list of PKs,
+  so both decorated and standard actions work seamlessly.
+
 ## `GrpcChangeList`
 
 Custom `ChangeList` that populates results by calling the adapter.

@@ -8,7 +8,7 @@ from django.contrib.admin.sites import AdminSite
 from django.test import RequestFactory
 
 from django_admin_grpc.adapters import BaseGrpcServiceAdapter
-from django_admin_grpc.admin import GrpcChangeList, GrpcResourceAdmin
+from django_admin_grpc.admin import GrpcChangeList, GrpcResourceAdmin, grpc_action
 from django_admin_grpc.paginator import PagedResult
 from django_admin_grpc.resources import (
     BaseGrpcResource,
@@ -930,3 +930,167 @@ class TestGrpcResourceAdminTemplateResolution:
 
         admin = TemplAdmin(admin_site=AdminSite())
         assert admin._get_delete_confirm_template() == "custom/delete.html"
+
+
+class TestGrpcAction:
+    def test_decorator_receives_selected_pks(self):
+        """Custom @grpc_action receives selected PKs instead of queryset."""
+        received_pks = []
+
+        class ActionAdmin(GrpcResourceAdmin):
+            resource_class = ProductResource
+            adapter_class = MockAdapter
+            actions = ["activate_selected"]
+
+            @grpc_action(description="Activate selected")
+            def activate_selected(self, request, selected_pks):
+                received_pks.extend(selected_pks)
+
+        admin = ActionAdmin(admin_site=AdminSite())
+        request = RequestFactory().post("/")
+        qs = Mock()
+        qs._selected_pks = ["1", "2", "3"]
+
+        # Django's get_actions() returns unbound functions; self is passed explicitly
+        action_func = admin.get_actions(request)["activate_selected"][0]
+        action_func(admin, request, qs)
+
+        assert received_pks == ["1", "2", "3"]
+
+    def test_decorator_can_call_apply_grpc_bulk_update(self):
+        """Custom action can use apply_grpc_bulk_update with selected_pks."""
+        class TrackingAdapter(MockAdapter):
+            def __init__(self):
+                super().__init__()
+                self.updated = []
+
+            def update(self, resource_class, pk, data):
+                self.updated.append((pk, data))
+                return ProductResource(id=pk, **data)
+
+        adapter = TrackingAdapter()
+
+        class ActionAdmin(GrpcResourceAdmin):
+            resource_class = ProductResource
+            adapter_class = adapter
+            actions = ["activate_selected"]
+
+            @grpc_action(description="Activate selected")
+            def activate_selected(self, request, selected_pks):
+                return self.apply_grpc_bulk_update(request, selected_pks, {"active": True})
+
+        admin = ActionAdmin(admin_site=AdminSite())
+        request = RequestFactory().post("/")
+        qs = Mock()
+        qs._selected_pks = ["10", "20"]
+
+        action_func = admin.get_actions(request)["activate_selected"][0]
+        updated, errors = action_func(admin, request, qs)
+
+        assert updated == 2
+        assert errors == 0
+        assert adapter.updated == [("10", {"active": True}), ("20", {"active": True})]
+
+    def test_description_appears_in_get_actions(self):
+        """Action description appears in get_actions() tuple."""
+        class ActionAdmin(GrpcResourceAdmin):
+            resource_class = ProductResource
+            adapter_class = MockAdapter
+            actions = ["my_action"]
+
+            @grpc_action(description="My custom action")
+            def my_action(self, request, selected_pks):
+                pass
+
+        admin = ActionAdmin(admin_site=AdminSite())
+        request = RequestFactory().get("/")
+        actions = admin.get_actions(request)
+
+        assert "my_action" in actions
+        _func, name, description = actions["my_action"]
+        assert name == "my_action"
+        assert description == "My custom action"
+
+    def test_default_description_from_method_name(self):
+        """Default description is derived from method name if not provided."""
+        class ActionAdmin(GrpcResourceAdmin):
+            resource_class = ProductResource
+            adapter_class = MockAdapter
+            actions = ["do_something_cool"]
+
+            @grpc_action
+            def do_something_cool(self, request, selected_pks):
+                pass
+
+        admin = ActionAdmin(admin_site=AdminSite())
+        request = RequestFactory().get("/")
+        actions = admin.get_actions(request)
+
+        _func, name, description = actions["do_something_cool"]
+        assert "do something cool" in description.lower()
+
+    def test_existing_builtin_delete_still_works(self):
+        """Built-in grpc_delete_selected continues to work alongside custom actions."""
+        class ActionAdmin(GrpcResourceAdmin):
+            resource_class = ProductResource
+            adapter_class = MockAdapter
+            grpc_enable_delete = True
+            actions = ["activate_selected"]
+
+            @grpc_action(description="Activate selected")
+            def activate_selected(self, request, selected_pks):
+                pass
+
+        admin = ActionAdmin(admin_site=AdminSite())
+        request = RequestFactory().get("/")
+        actions = admin.get_actions(request)
+
+        assert "grpc_delete_selected" in actions
+        assert "activate_selected" in actions
+        assert "delete_selected" not in actions
+
+    def test_permissions_parameter(self):
+        """Permissions parameter is forwarded to the action wrapper."""
+        class ActionAdmin(GrpcResourceAdmin):
+            resource_class = ProductResource
+            adapter_class = MockAdapter
+            actions = ["restricted_action"]
+
+            @grpc_action(description="Restricted", permissions=["change"])
+            def restricted_action(self, request, selected_pks):
+                pass
+
+        admin = ActionAdmin(admin_site=AdminSite())
+        request = RequestFactory().get("/")
+        actions = admin.get_actions(request)
+
+        func = actions["restricted_action"][0]
+        assert getattr(func, "allowed_permissions", None) == ["change"]
+
+    def test_apply_grpc_bulk_update_accepts_list_directly(self):
+        """apply_grpc_bulk_update can receive a list of PKs directly."""
+        class TrackingAdapter(MockAdapter):
+            def __init__(self):
+                super().__init__()
+                self.updated = []
+
+            def update(self, resource_class, pk, data):
+                self.updated.append(pk)
+                return ProductResource(id=pk, **data)
+
+        adapter = TrackingAdapter()
+
+        class BulkAdmin(GrpcResourceAdmin):
+            resource_class = ProductResource
+            adapter_class = adapter
+
+        admin = BulkAdmin(admin_site=AdminSite())
+        request = RequestFactory().post("/")
+
+        updated, errors = admin.apply_grpc_bulk_update(
+            request, ["5", "6"], {"name": "Bulk"}
+        )
+
+        assert updated == 2
+        assert errors == 0
+        assert adapter.updated == ["5", "6"]

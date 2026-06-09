@@ -5,6 +5,7 @@ A reusable Django package for creating admin interfaces backed by gRPC services.
 """
 
 from django_admin_grpc.adapters import BaseGrpcServiceAdapter
+from django_admin_grpc.admin import GrpcResourceAdmin, grpc_action
 from django_admin_grpc.exceptions import (
     GrpcAdminError,
     GrpcDeadlineExceededError,
@@ -42,6 +43,8 @@ __version__ = "0.2.0"
 
 __all__ = [
     "GUIDE",
+    "GrpcResourceAdmin",
+    "grpc_action",
     "BaseFieldConfig",
     "BaseGrpcResource",
     "BaseGrpcServiceAdapter",

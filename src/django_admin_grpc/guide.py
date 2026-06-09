@@ -387,34 +387,64 @@ options automatically from the Django database. Service/custom FKs should provid
 In detail views, `display_field` controls related-object display. If it is omitted,
 the raw FK value is shown.
 
-### Bulk Actions
+### Custom gRPC Actions
+
+Use `@grpc_action` to define actions that operate on selected rows via gRPC.
+The decorator passes ``selected_pks`` (a list of primary keys) instead of a
+Django queryset, making bulk operations straightforward:
 
 ```python
 from django.contrib import messages
+from django_admin_grpc.admin import GrpcResourceAdmin, grpc_action
 
 class ProductAdmin(GrpcResourceAdmin):
     actions = ["activate_selected"]
 
-    @admin.action(description="Activate selected")
-    def activate_selected(self, request, queryset):
-        adapter = self.get_adapter()
-        for obj in queryset:
-            adapter.update(self.resource_class, obj.pk, {"active": True})
-        messages.success(request, "Activated selected products.")
+    @grpc_action(description="Activate selected products")
+    def activate_selected(self, request, selected_pks):
+        updated, errors = self.apply_grpc_bulk_update(
+            request, selected_pks, {"active": True}
+        )
+        if updated:
+            messages.success(request, f"Activated {updated} product(s).")
+        if errors:
+            messages.error(request, f"Failed to update {errors} product(s).")
 ```
+
+You can also restrict actions by permission:
+
+```python
+class ProductAdmin(GrpcResourceAdmin):
+    actions = ["deactivate_selected"]
+
+    @grpc_action(
+        description="Deactivate selected products",
+        permissions=["change_product"],
+    )
+    def deactivate_selected(self, request, selected_pks):
+        updated, errors = self.apply_grpc_bulk_update(
+            request, selected_pks, {"active": False}
+        )
+        if updated:
+            messages.success(request, f"Deactivated {updated} product(s).")
+```
+
+Standard Django ``@admin.action`` still works if you need the raw queryset.
 
 ### Bulk Update Helper
 
-Use `apply_grpc_bulk_update` to update multiple records with the same payload:
+Use `apply_grpc_bulk_update` to update multiple records with the same payload.
+It accepts either a queryset (from standard actions) or a list of PKs
+(from ``@grpc_action``):
 
 ```python
 class ProductAdmin(GrpcResourceAdmin):
     actions = ["activate_selected"]
 
-    @admin.action(description="Activate selected")
-    def activate_selected(self, request, queryset):
+    @grpc_action(description="Activate selected")
+    def activate_selected(self, request, selected_pks):
         updated, errors = self.apply_grpc_bulk_update(
-            request, queryset, {"active": True}
+            request, selected_pks, {"active": True}
         )
         if updated:
             messages.success(request, f"Activated {updated} product(s).")

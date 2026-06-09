@@ -7,7 +7,9 @@ metadata and ``BaseGrpcServiceAdapter`` for transport.
 """
 from __future__ import annotations
 
+import functools
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlencode
 
@@ -28,6 +30,59 @@ if TYPE_CHECKING:
     from django_admin_grpc.resources import BaseGrpcResource
 
 logger = logging.getLogger(__name__)
+
+
+def grpc_action(
+    function: Callable[..., Any] | None = None,
+    *,
+    description: str = "",
+    permissions: list[str] | None = None,
+) -> Callable[..., Any]:
+    """Decorator for gRPC admin actions.
+
+    Wraps a method so it receives ``selected_pks`` (a list of primary keys)
+    instead of a Django queryset, making it easier to work with gRPC bulk
+    operations.
+
+    Usage::
+
+        class ProductAdmin(GrpcResourceAdmin):
+            actions = ["activate_selected"]
+
+            @grpc_action(description="Activate selected products")
+            def activate_selected(self, request, selected_pks):
+                updated, errors = self.apply_grpc_bulk_update(
+                    request, selected_pks, {"active": True}
+                )
+                if updated:
+                    messages.success(request, f"Activated {updated} product(s).")
+
+    The decorated method is automatically exposed by Django's
+    ``ModelAdmin.get_actions()`` when listed in ``actions``.
+
+    Args:
+        description: Human-readable label shown in the admin action dropdown.
+            Defaults to the method name with underscores replaced by spaces.
+        permissions: Optional list of permission codenames required to use
+            this action (e.g. ``["change_product"]``).
+    """
+
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+        @functools.wraps(func)
+        def wrapper(self: Any, request: HttpRequest, queryset: Any) -> Any:
+            selected_pks = self.get_grpc_selected_pks(request, queryset)
+            return func(self, request, selected_pks)
+
+        wrapper.short_description = description or getattr(  # type: ignore[attr-defined]
+            func, "short_description", func.__name__.replace("_", " ").capitalize()
+        )
+        if permissions is not None:
+            wrapper.allowed_permissions = permissions  # type: ignore[attr-defined]
+        return wrapper
+
+    if function is None:
+        return decorator
+    return decorator(function)
 
 
 class GrpcChangeList(ChangeList):
@@ -491,9 +546,15 @@ class GrpcResourceAdmin(ModelAdmin):
             messages.error(request, "gRPC adapter not available.")
             return 0, 0
 
+        # Support passing selected_pks directly (e.g. from @grpc_action)
+        if isinstance(queryset, (list, tuple)):
+            selected_pks = list(queryset)
+        else:
+            selected_pks = self.get_grpc_selected_pks(request, queryset)
+
         updated = 0
         errors = 0
-        for pk in self.get_grpc_selected_pks(request, queryset):
+        for pk in selected_pks:
             try:
                 adapter.update(self._resource_class, pk, data)
                 updated += 1
