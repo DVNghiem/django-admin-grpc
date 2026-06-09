@@ -9,6 +9,7 @@ from django.test import RequestFactory
 
 from django_admin_grpc.adapters import BaseGrpcServiceAdapter
 from django_admin_grpc.admin import GrpcChangeList, GrpcResourceAdmin, grpc_action
+from django_admin_grpc.models import GrpcFakeQuerySet
 from django_admin_grpc.paginator import PagedResult
 from django_admin_grpc.resources import (
     BaseGrpcResource,
@@ -558,7 +559,57 @@ class TestGrpcChangeList:
             sortable_by=["name"],
             search_help_text="",
         )
-        assert cl.get_queryset(request) == []
+        qs = cl.get_queryset(request)
+        assert isinstance(qs, GrpcFakeQuerySet)
+        assert qs.model is admin_instance.model
+
+    def test_get_queryset_filter_pk_in(self, admin_instance):
+        """filter(pk__in=...) on the changelist queryset stores selected PKs."""
+        request = RequestFactory().get("/")
+        cl = GrpcChangeList(
+            request=request,
+            model=admin_instance.model,
+            list_display=["name"],
+            list_display_links=["name"],
+            list_filter=[],
+            date_hierarchy=None,
+            search_fields=[],
+            list_select_related=False,
+            list_per_page=25,
+            list_max_show_all=200,
+            list_editable=[],
+            model_admin=admin_instance,
+            sortable_by=["name"],
+            search_help_text="",
+        )
+        filtered = cl.get_queryset(request).filter(pk__in=["1", "2"])
+        assert isinstance(filtered, GrpcFakeQuerySet)
+        assert filtered._selected_pks == ["1", "2"]
+
+    def test_get_queryset_filter_then_get_grpc_selected_pks(self, admin_instance):
+        """Simulate Django's response_action flow: filter then read selected PKs."""
+        request = RequestFactory().post("/")
+        selected = ["10", "20", "30"]
+        cl = GrpcChangeList(
+            request=request,
+            model=admin_instance.model,
+            list_display=["name"],
+            list_display_links=["name"],
+            list_filter=[],
+            date_hierarchy=None,
+            search_fields=[],
+            list_select_related=False,
+            list_per_page=25,
+            list_max_show_all=200,
+            list_editable=[],
+            model_admin=admin_instance,
+            sortable_by=["name"],
+            search_help_text="",
+        )
+        queryset = cl.get_queryset(request)
+        filtered = queryset.filter(pk__in=selected)
+        pks = admin_instance.get_grpc_selected_pks(request, filtered)
+        assert pks == ["10", "20", "30"]
 
     def test_get_results(self, admin_instance, reset_registry):
         product = ProductResource(id=1, name="Widget", price=10.0, active=True)

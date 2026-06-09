@@ -324,8 +324,8 @@ class GrpcChangeList(ChangeList):
 
     def get_queryset(  # type: ignore[override]
         self, request: HttpRequest
-    ) -> list[Any]:
-        return []
+    ) -> GrpcFakeQuerySet:
+        return GrpcFakeQuerySet(self.model)
 
     def get_results(self, request: HttpRequest) -> None:
         page_num = self.page_num
