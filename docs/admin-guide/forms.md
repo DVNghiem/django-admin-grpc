@@ -131,6 +131,33 @@ class ProductAdmin(GrpcResourceAdmin):
         return data
 ```
 
+## Validation Hooks
+
+Before create/update payloads are sent to the adapter, the admin runs `clean_grpc_data`. You can validate and transform data using per-field cleaners and an object-level `clean` hook:
+
+```python
+class ProductAdmin(GrpcResourceAdmin):
+    def clean_name(self, value):
+        return value.strip()
+
+    def clean_price(self, value):
+        if value < 0:
+            from django import forms
+            raise forms.ValidationError("Price cannot be negative.")
+        return value
+
+    def clean(self, data):
+        cleaned = dict(data)
+        cleaned["name"] = cleaned["name"].upper()
+        return cleaned
+```
+
+Execution order:
+
+1. Per-field cleaners (`clean_<field_name>`) run first for each field in the payload.
+2. Object-level `clean(data)` receives the fully cleaned dict and returns the final payload.
+3. `get_grpc_create_data` / `get_grpc_update_data` run last, just before the adapter call.
+
 ## Form Initial Data
 
 Override `get_grpc_form_initial` to set default values when opening the change form:
@@ -143,9 +170,29 @@ class ProductAdmin(GrpcResourceAdmin):
         return initial
 ```
 
-## Read-Only Fields
+## Field Controls
 
-To make fields read-only in the change view, do not include them in `grpc_form_fields`. They will still appear in the detail section below the form (if `grpc_detail_fields` is configured).
+Field configs support four visibility flags that control where a field appears:
+
+| Flag | Effect |
+|------|--------|
+| `readonly=True` | Excluded from add/change forms. Still visible in list and detail views. |
+| `editable=False` | Same as `readonly=True`. Excluded from add/change forms. |
+| `detail_only=True` | Excluded from add/change forms and list views. Detail view only. |
+| `list_only=True` | Excluded from add/change forms and detail views. List view only. |
+
+```python
+class Product(BaseGrpcResource):
+    fields = [
+        CharFieldConfig(name="id", readonly=True),
+        CharFieldConfig(name="name"),
+        CharFieldConfig(name="server_code", editable=False),
+        CharFieldConfig(name="audit_note", detail_only=True),
+        CharFieldConfig(name="list_badge", list_only=True),
+    ]
+```
+
+You can also control visibility by omitting fields from `grpc_form_fields` and `grpc_detail_fields`:
 
 ```python
 class ProductAdmin(GrpcResourceAdmin):

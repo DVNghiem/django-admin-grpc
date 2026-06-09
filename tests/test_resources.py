@@ -43,9 +43,15 @@ class TestCharFieldConfig:
             help_text="Current status",
             initial="pending",
             max_length=20,
+            readonly=True,
+            detail_only=True,
         )
         assert fc.initial == "pending"
         assert fc.max_length == 20
+        assert fc.readonly is True
+        assert fc.editable is True
+        assert fc.detail_only is True
+        assert fc.list_only is False
 
 
 class TestChoicesFieldConfig:

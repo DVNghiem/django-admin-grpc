@@ -44,6 +44,34 @@ class ProductAdmin(GrpcResourceAdmin):
 
 Without `grpc_form_fields`, the admin cannot build a form, so create and update are disabled regardless of the flags.
 
+## gRPC Permission Hooks
+
+For finer-grained control, override the `has_grpc_*` hooks. These are called **before** the standard Django permission methods and allow you to deny actions independently of the capability flags:
+
+```python
+class ProductAdmin(GrpcResourceAdmin):
+    def has_grpc_add_permission(self, request):
+        return request.user.is_superuser
+
+    def has_grpc_change_permission(self, request, obj=None):
+        return request.user.groups.filter(name="Editors").exists()
+
+    def has_grpc_delete_permission(self, request, obj=None):
+        return request.user.is_superuser
+
+    def has_grpc_view_permission(self, request, obj=None):
+        return request.user.is_staff
+```
+
+The final permission is the intersection of the hook, the capability flag, and (for add/update/delete) adapter support:
+
+| Action | Effective Permission |
+|--------|----------------------|
+| Add | `has_grpc_add_permission` AND `grpc_enable_create` AND adapter `create()` AND `grpc_form_fields` |
+| Change | `has_grpc_change_permission` AND `has_view_permission` AND `grpc_enable_update` AND adapter `update()` AND `grpc_form_fields` |
+| Delete | `has_grpc_delete_permission` AND `grpc_enable_delete` AND adapter `delete()` |
+| View | `has_grpc_view_permission` |
+
 ## Django Permission Hooks
 
 Override Django's standard permission methods for dynamic checks:

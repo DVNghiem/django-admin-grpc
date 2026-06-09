@@ -76,6 +76,10 @@ All field config subclasses accept these parameters:
 | `help_text` | `str` | `""` | Help text shown below the form field. |
 | `initial` | `Any` | `None` | Default value for the form field. |
 | `source` | `str \| None` | `None` | Attribute name in the gRPC response if it differs from `name`. |
+| `readonly` | `bool` | `False` | Excludes the field from add/change forms. |
+| `editable` | `bool` | `True` | When `False`, excludes the field from add/change forms. |
+| `detail_only` | `bool` | `False` | Excludes the field from add/change forms and list views (detail view only). |
+| `list_only` | `bool` | `False` | Excludes the field from add/change forms and detail views (list view only). |
 
 ### Supported Field Types
 

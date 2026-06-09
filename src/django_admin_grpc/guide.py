@@ -164,7 +164,27 @@ Methods:
 | `DateFieldConfig` | date | — |
 | `FKFieldConfig` | fk | `model`, `to_field`, `display_field`, `service`, `get_method`, `choices`, `choices_loader` |
 
-All field configs support: `name`, `label`, `required`, `help_text`, `initial`, `source`
+All field configs support: `name`, `label`, `required`, `help_text`, `initial`, `source`, `readonly`, `editable`, `detail_only`, `list_only`
+
+### Field Visibility Controls
+
+| Flag | Effect |
+|------|--------|
+| `readonly=True` | Excluded from add/change forms |
+| `editable=False` | Same as `readonly` — excluded from add/change forms |
+| `detail_only=True` | Detail view only (excluded from list and forms) |
+| `list_only=True` | List view only (excluded from detail and forms) |
+
+```python
+class Product(BaseGrpcResource):
+    fields = [
+        CharFieldConfig(name="id", readonly=True),
+        CharFieldConfig(name="name"),
+        CharFieldConfig(name="server_code", editable=False),
+        CharFieldConfig(name="audit_note", detail_only=True),
+        CharFieldConfig(name="list_badge", list_only=True),
+    ]
+```
 
 ### Adapters (`BaseGrpcServiceAdapter`)
 
@@ -201,6 +221,14 @@ Methods you can override:
 - `get_grpc_form_initial(obj)` — provide initial form values
 - `get_grpc_detail_fields()` — customize detail view fields
 - `resolve_fk_value(field_name, config, fk_id)` — customize FK resolution
+- `has_grpc_add_permission(request)` — deny/allow add independently of flags
+- `has_grpc_change_permission(request, obj=None)` — deny/allow change
+- `has_grpc_delete_permission(request, obj=None)` — deny/allow delete
+- `has_grpc_view_permission(request, obj=None)` — deny/allow view
+- `clean_grpc_data(data)` — validate/transform data before create/update
+- `clean_<field_name>(value)` — per-field validation cleaner
+- `clean(data)` — object-level validation hook
+- `apply_grpc_bulk_update(request, queryset, data)` — bulk update helper
 
 ### Paginator (`PagedResult`)
 
@@ -318,6 +346,9 @@ class ProductAdmin(GrpcResourceAdmin):
         "active": {"type": "boolean"},
         "status": {"type": "choices", "choices": [("draft", "Draft"), ("live", "Live")]},
         "name": {"type": "text", "label": "Product Name"},
+        "price": {"type": "number_range"},
+        "created_at": {"type": "date_range"},
+        "tags": {"type": "multi_choices", "choices": [("sale", "Sale"), ("new", "New")]},
     }
 ```
 
@@ -371,6 +402,48 @@ class ProductAdmin(GrpcResourceAdmin):
             adapter.update(self.resource_class, obj.pk, {"active": True})
         messages.success(request, "Activated selected products.")
 ```
+
+### Bulk Update Helper
+
+Use `apply_grpc_bulk_update` to update multiple records with the same payload:
+
+```python
+class ProductAdmin(GrpcResourceAdmin):
+    actions = ["activate_selected"]
+
+    @admin.action(description="Activate selected")
+    def activate_selected(self, request, queryset):
+        updated, errors = self.apply_grpc_bulk_update(
+            request, queryset, {"active": True}
+        )
+        if updated:
+            messages.success(request, f"Activated {updated} product(s).")
+        if errors:
+            messages.error(request, f"Failed to update {errors} product(s).")
+```
+
+### Validation Hooks
+
+Validate and transform data before it reaches the adapter:
+
+```python
+class ProductAdmin(GrpcResourceAdmin):
+    def clean_name(self, value):
+        return value.strip()
+
+    def clean_price(self, value):
+        if value < 0:
+            from django import forms
+            raise forms.ValidationError("Price cannot be negative.")
+        return value
+
+    def clean(self, data):
+        cleaned = dict(data)
+        cleaned["name"] = cleaned["name"].upper()
+        return cleaned
+```
+
+Execution order: per-field `clean_<field>` → object `clean` → `get_grpc_create_data` / `get_grpc_update_data`.
 
 ## Testing
 

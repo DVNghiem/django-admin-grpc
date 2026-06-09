@@ -148,6 +148,75 @@ class GrpcChangeList(ChangeList):
                             logger.warning(
                                 "Failed to create filter for %s: %s", field_path, e
                             )
+                    elif field_type in ("number_range", "date_range"):
+                        from django_admin_grpc.filters import (
+                            GrpcDateRangeFilter,
+                            GrpcNumberRangeFilter,
+                        )
+
+                        filter_class = (
+                            GrpcNumberRangeFilter
+                            if field_type == "number_range"
+                            else GrpcDateRangeFilter
+                        )
+                        fake_field = type(
+                            "FakeField",
+                            (),
+                            {
+                                "name": field_path,
+                                "verbose_name": filter_config.get(
+                                    "label",
+                                    field_path.replace("_", " ").title(),
+                                ),
+                            },
+                        )()
+                        try:
+                            filter_spec = filter_class(
+                                fake_field,
+                                request,
+                                params,  # type: ignore[arg-type]
+                                self.model,
+                                self.model_admin,
+                                field_path,
+                            )
+                            filter_specs.append(filter_spec)
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to create %s filter for %s: %s",
+                                field_type,
+                                field_path,
+                                e,
+                            )
+                    elif field_type == "multi_choices" and choices_list:
+                        from django_admin_grpc.filters import create_grpc_filter_spec
+
+                        filter_class = create_grpc_filter_spec(
+                            field_path, field_type, choices_list
+                        )
+                        fake_field = type(
+                            "FakeField",
+                            (),
+                            {
+                                "name": field_path,
+                                "verbose_name": field_path.replace("_", " ").title(),
+                            },
+                        )()
+                        try:
+                            filter_spec = filter_class(
+                                fake_field,
+                                request,
+                                params,  # type: ignore[arg-type]
+                                self.model,
+                                self.model_admin,
+                                field_path,
+                            )
+                            filter_specs.append(filter_spec)
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to create multi_choices filter for %s: %s",
+                                field_path,
+                                e,
+                            )
                     elif field_type == "text":
                         from django_admin_grpc.filters import GrpcTextInputFilter
 
@@ -386,9 +455,7 @@ class GrpcResourceAdmin(ModelAdmin):
         return actions
 
     def _grpc_delete_selected(self, request: HttpRequest, queryset: Any) -> None:
-        selected_pks = queryset._selected_pks or request.POST.getlist(
-            "_selected_action"
-        )
+        selected_pks = self.get_grpc_selected_pks(request, queryset)
         deleted = 0
         errors = 0
         adapter = self.get_adapter()
@@ -408,6 +475,32 @@ class GrpcResourceAdmin(ModelAdmin):
             messages.error(request, f"Failed to delete {errors} record(s).")
 
     _grpc_delete_selected.short_description = "Delete selected records"  # type: ignore[attr-defined]
+
+    def get_grpc_selected_pks(self, request: HttpRequest, queryset: Any) -> list[Any]:
+        selected = getattr(queryset, "_selected_pks", None) or request.POST.getlist("_selected_action")
+        return list(selected or [])
+
+    def apply_grpc_bulk_update(
+        self,
+        request: HttpRequest,
+        queryset: Any,
+        data: dict[str, Any],
+    ) -> tuple[int, int]:
+        adapter = self.get_adapter()
+        if adapter is None:
+            messages.error(request, "gRPC adapter not available.")
+            return 0, 0
+
+        updated = 0
+        errors = 0
+        for pk in self.get_grpc_selected_pks(request, queryset):
+            try:
+                adapter.update(self._resource_class, pk, data)
+                updated += 1
+            except Exception as exc:
+                logger.warning("gRPC bulk update failed for pk=%s: %s", pk, exc)
+                errors += 1
+        return updated, errors
 
     # ── Adapter plumbing ───────────────────────────────────────────────────
 
@@ -434,19 +527,56 @@ class GrpcResourceAdmin(ModelAdmin):
 
     def get_grpc_filters(self, request: HttpRequest) -> dict[str, Any]:
         filters: dict[str, Any] = {}
-        if self.grpc_filter_config is not None:
-            if isinstance(self.grpc_filter_config, dict):
-                filterable_fields = set(self.grpc_filter_config.keys())
+        cfg = self.grpc_filter_config
+        is_dict_config = isinstance(cfg, dict)
+        if cfg is not None:
+            if is_dict_config:
+                filterable_fields = set(cast(dict[str, Any], cfg).keys())
             else:
-                filterable_fields = set(self.grpc_filter_config)
+                filterable_fields = set(cfg)
         else:
             filterable_fields = None
 
-        for key, value in request.GET.items():
-            if key not in {"p", "o", "all", "_changelist_filters", "e", "q", "cursor"}:
-                if filterable_fields is not None and key not in filterable_fields:
+        filter_config_dict: dict[str, Any] = (
+            cast(dict[str, Any], cfg) if is_dict_config else {}
+        )
+
+        for key in request.GET:
+            if key in {"p", "o", "all", "_changelist_filters", "e", "q", "cursor"}:
+                continue
+
+            if filterable_fields is not None:
+                if is_dict_config:
+                    base_key = key.split("__")[0]
+                    if base_key not in filterable_fields:
+                        continue
+                    config = filter_config_dict.get(base_key, {})
+                    field_type = config.get("type", "text") if isinstance(config, dict) else "text"
+                    suffix = key[len(base_key) :] if key.startswith(base_key) else ""
+                    if field_type in ("number_range", "date_range") and suffix and suffix not in {"__gte", "__lte", "__gt", "__lt"}:
+                        continue
+                    if field_type == "multi_choices" and suffix and suffix not in {"", "__exact", "__in"}:
+                        continue
+                else:
+                    if key not in filterable_fields:
+                        continue
+
+            if is_dict_config:
+                base_key = key.split("__")[0]
+                config = filter_config_dict.get(base_key, {})
+                field_type = config.get("type", "text") if isinstance(config, dict) else "text"
+                if field_type == "multi_choices":
+                    values = request.GET.getlist(key)
+                    parsed: list[str] = []
+                    for v in values:
+                        parsed.extend(v.split(","))
+                    parsed = [v.strip() for v in parsed if v.strip()]
+                    if parsed:
+                        filters[key] = parsed
                     continue
-                filters[key] = value
+
+            filters[key] = request.GET[key]
+
         return filters
 
     def fetch_list(
@@ -507,21 +637,33 @@ class GrpcResourceAdmin(ModelAdmin):
         return self.grpc_enable_delete and self._adapter_supports_delete()
 
     def has_add_permission(self, request: HttpRequest) -> bool:
-        return self.grpc_enable_create and self._can_create()
+        return self.has_grpc_add_permission(request) and self.grpc_enable_create and self._can_create()
 
     def has_change_permission(
         self, request: HttpRequest, obj: Any = None
     ) -> bool:
-        return self.has_view_permission(request, obj=obj)
+        return self.has_grpc_change_permission(request, obj=obj) and self.has_view_permission(request, obj=obj)
 
     def has_delete_permission(
         self, request: HttpRequest, obj: Any = None
     ) -> bool:
-        return self._can_delete()
+        return self.has_grpc_delete_permission(request, obj=obj) and self._can_delete()
 
     def has_view_permission(
         self, request: HttpRequest, obj: Any = None
     ) -> bool:
+        return self.has_grpc_view_permission(request, obj=obj)
+
+    def has_grpc_add_permission(self, request: HttpRequest) -> bool:
+        return True
+
+    def has_grpc_change_permission(self, request: HttpRequest, obj: Any = None) -> bool:
+        return True
+
+    def has_grpc_delete_permission(self, request: HttpRequest, obj: Any = None) -> bool:
+        return True
+
+    def has_grpc_view_permission(self, request: HttpRequest, obj: Any = None) -> bool:
         return True
 
     # ── Forms ──────────────────────────────────────────────────────────────
@@ -535,6 +677,17 @@ class GrpcResourceAdmin(ModelAdmin):
             widgets=get_default_widgets(),
             field_names=self.grpc_form_fields or None,
         )
+
+    def clean_grpc_data(self, data: dict[str, Any]) -> dict[str, Any]:
+        cleaned = dict(data)
+        for field_name, value in list(cleaned.items()):
+            field_cleaner = getattr(self, f"clean_{field_name}", None)
+            if callable(field_cleaner):
+                cleaned[field_name] = field_cleaner(value)
+        return self.clean(cleaned)
+
+    def clean(self, data: dict[str, Any]) -> dict[str, Any]:
+        return data
 
     def get_grpc_form_initial(self, obj: Any) -> dict[str, Any]:
         return {
@@ -566,7 +719,9 @@ class GrpcResourceAdmin(ModelAdmin):
                 fields.append((label, str(fn)))
             return fields
         return [
-            (fc.label or fc.name, fc.name) for fc in self._resource_class.get_field_configs()
+            (fc.label or fc.name, fc.name)
+            for fc in self._resource_class.get_field_configs()
+            if not fc.list_only
         ]
 
     def get_grpc_detail_rows(self, obj: Any) -> list[dict[str, Any]]:
@@ -726,9 +881,10 @@ class GrpcResourceAdmin(ModelAdmin):
                                 f"admin:{self._fake_model._meta.app_label}_{self._fake_model._meta.model_name}_changelist"
                             )
                         )
+                    cleaned_data = self.clean_grpc_data(form.cleaned_data)
                     adapter.create(
                         self._resource_class,
-                        self.get_grpc_create_data(form.cleaned_data),
+                        self.get_grpc_create_data(cleaned_data),
                     )
                     messages.success(
                         request,
@@ -815,10 +971,11 @@ class GrpcResourceAdmin(ModelAdmin):
                     if adapter is None:
                         messages.error(request, "gRPC adapter not available.")
                         return HttpResponseRedirect(request.path)
+                    cleaned_data = self.clean_grpc_data(form.cleaned_data)
                     adapter.update(
                         self._resource_class,
                         str(obj.pk),
-                        self.get_grpc_update_data(obj, form.cleaned_data),
+                        self.get_grpc_update_data(obj, cleaned_data),
                     )
                     messages.success(
                         request,

@@ -26,6 +26,10 @@ class BaseFieldConfig:
     help_text: str = ""
     initial: Any = None
     source: str | None = None
+    readonly: bool = False
+    editable: bool = True
+    detail_only: bool = False
+    list_only: bool = False
 
     def __post_init__(self) -> None:
         if self.label is None:

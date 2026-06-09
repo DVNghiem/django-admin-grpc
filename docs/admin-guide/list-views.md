@@ -209,6 +209,29 @@ class ProductAdmin(GrpcResourceAdmin):
 
 Because `queryset` is a `GrpcFakeQuerySet`, iterate over it to access the wrapped resource instances.
 
+### Bulk Update Helper
+
+Use `apply_grpc_bulk_update` to update multiple records with the same payload:
+
+```python
+from django.contrib import messages
+
+class ProductAdmin(GrpcResourceAdmin):
+    actions = ["activate_selected", "deactivate_selected"]
+
+    @admin.action(description="Activate selected products")
+    def activate_selected(self, request, queryset):
+        updated, errors = self.apply_grpc_bulk_update(
+            request, queryset, {"active": True}
+        )
+        if updated:
+            messages.success(request, f"Activated {updated} product(s).")
+        if errors:
+            messages.error(request, f"Failed to update {errors} product(s).")
+```
+
+The helper iterates over `get_grpc_selected_pks(request, queryset)` and calls `adapter.update()` for each PK. It returns a tuple of `(updated_count, error_count)`.
+
 ## Empty States
 
 When the adapter returns no items or raises an error, the admin displays an empty table with a message:

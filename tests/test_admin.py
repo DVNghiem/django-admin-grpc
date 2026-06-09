@@ -201,6 +201,41 @@ class TestGrpcResourceAdminPermissions:
         request = RequestFactory().get("/")
         assert admin_instance.has_change_permission(request) is True
 
+    def test_grpc_permission_hooks_can_deny_actions(self, reset_registry):
+        class HookAdmin(GrpcResourceAdmin):
+            resource_class = ProductResource
+            adapter_class = MockAdapter
+            grpc_form_fields = ["name"]
+            grpc_enable_create = True
+            grpc_enable_delete = True
+
+            def has_grpc_add_permission(self, request):
+                return False
+
+            def has_grpc_delete_permission(self, request, obj=None):
+                return False
+
+            def has_grpc_view_permission(self, request, obj=None):
+                return False
+
+        admin = HookAdmin(admin_site=AdminSite())
+        request = RequestFactory().get("/")
+        assert admin.has_add_permission(request) is False
+        assert admin.has_delete_permission(request) is False
+        assert admin.has_view_permission(request) is False
+
+    def test_grpc_change_permission_hook_can_deny_change(self):
+        class HookAdmin(GrpcResourceAdmin):
+            resource_class = ProductResource
+            adapter_class = MockAdapter
+
+            def has_grpc_change_permission(self, request, obj=None):
+                return False
+
+        admin = HookAdmin(admin_site=AdminSite())
+        request = RequestFactory().get("/")
+        assert admin.has_change_permission(request) is False
+
 
 class TestGrpcResourceAdminGetGrpcFilters:
     def test_get_grpc_filters(self, admin_instance):
@@ -242,6 +277,65 @@ class TestGrpcResourceAdminGetGrpcFilters:
         filters = admin.get_grpc_filters(request)
         assert filters == {}
 
+    def test_numeric_range_params_pass_through(self):
+        class RangeAdmin(GrpcResourceAdmin):
+            resource_class = ProductResource
+            adapter_class = MockAdapter
+            grpc_filter_config = {"price": {"type": "number_range"}}
+
+        admin = RangeAdmin(admin_site=AdminSite())
+        request = RequestFactory().get("/?price__gte=10&price__lte=100")
+        filters = admin.get_grpc_filters(request)
+        assert filters == {"price__gte": "10", "price__lte": "100"}
+
+    def test_date_range_params_pass_through(self):
+        class DateAdmin(GrpcResourceAdmin):
+            resource_class = ProductResource
+            adapter_class = MockAdapter
+            grpc_filter_config = {"created_at": {"type": "date_range"}}
+
+        admin = DateAdmin(admin_site=AdminSite())
+        request = RequestFactory().get("/?created_at__gte=2024-01-01&created_at__lte=2024-12-31")
+        filters = admin.get_grpc_filters(request)
+        assert filters == {"created_at__gte": "2024-01-01", "created_at__lte": "2024-12-31"}
+
+    def test_multi_choices_comma_separated(self):
+        class MultiAdmin(GrpcResourceAdmin):
+            resource_class = ProductResource
+            adapter_class = MockAdapter
+            grpc_filter_config = {
+                "status": {
+                    "type": "multi_choices",
+                    "choices": [("active", "Active"), ("pending", "Pending")],
+                }
+            }
+
+        admin = MultiAdmin(admin_site=AdminSite())
+        request = RequestFactory().get("/?status=active,pending")
+        filters = admin.get_grpc_filters(request)
+        assert filters == {"status": ["active", "pending"]}
+
+    def test_multi_choices_repeated_params(self):
+        class MultiAdmin(GrpcResourceAdmin):
+            resource_class = ProductResource
+            adapter_class = MockAdapter
+            grpc_filter_config = {
+                "status": {
+                    "type": "multi_choices",
+                    "choices": [("active", "Active"), ("pending", "Pending")],
+                }
+            }
+
+        admin = MultiAdmin(admin_site=AdminSite())
+        request = RequestFactory().get("/?status=active&status=pending")
+        filters = admin.get_grpc_filters(request)
+        assert filters == {"status": ["active", "pending"]}
+
+    def test_existing_simple_filters_still_work(self, admin_instance):
+        request = RequestFactory().get("/?name=Widget&active=1&p=1")
+        filters = admin_instance.get_grpc_filters(request)
+        assert filters == {"name": "Widget", "active": "1"}
+
 
 class TestGrpcResourceAdminBuildFormClass:
     def test_build_form_class(self, admin_instance):
@@ -249,6 +343,62 @@ class TestGrpcResourceAdminBuildFormClass:
         assert "name" in form_class.base_fields
         assert "price" in form_class.base_fields
         assert "active" in form_class.base_fields
+
+    def test_build_form_class_excludes_readonly_and_detail_only_fields(self):
+        class FieldControlResource(BaseGrpcResource):
+            class Meta:
+                app_label = "shop"
+                model_name = "fieldcontrol"
+
+            fields = [
+                CharFieldConfig(name="name"),
+                CharFieldConfig(name="server_code", readonly=True),
+                CharFieldConfig(name="audit_note", detail_only=True),
+                CharFieldConfig(name="list_badge", list_only=True),
+            ]
+
+        class FieldControlAdmin(GrpcResourceAdmin):
+            resource_class = FieldControlResource
+            adapter_class = MockAdapter
+            grpc_form_fields = ["name", "server_code", "audit_note", "list_badge"]
+
+        admin = FieldControlAdmin(admin_site=AdminSite())
+        form_class = admin._build_form_class()
+        assert list(form_class.base_fields) == ["name"]
+
+
+class TestGrpcResourceAdminValidation:
+    def test_clean_grpc_data_applies_field_and_object_hooks(self):
+        class ValidationAdmin(GrpcResourceAdmin):
+            resource_class = ProductResource
+            adapter_class = MockAdapter
+
+            def clean_name(self, value):
+                return value.strip()
+
+            def clean(self, data):
+                cleaned = dict(data)
+                cleaned["name"] = cleaned["name"].upper()
+                cleaned["validated"] = True
+                return cleaned
+
+        admin = ValidationAdmin(admin_site=AdminSite())
+        data = admin.clean_grpc_data({"name": " widget "})
+        assert data == {"name": "WIDGET", "validated": True}
+
+    def test_clean_grpc_data_can_raise_validation_error(self):
+        from django import forms
+
+        class ValidationAdmin(GrpcResourceAdmin):
+            resource_class = ProductResource
+            adapter_class = MockAdapter
+
+            def clean_name(self, value):
+                raise forms.ValidationError("Invalid name")
+
+        admin = ValidationAdmin(admin_site=AdminSite())
+        with pytest.raises(forms.ValidationError):
+            admin.clean_grpc_data({"name": "bad"})
 
 
 class TestGrpcResourceAdminDetailFields:
@@ -273,6 +423,25 @@ class TestGrpcResourceAdminDetailFields:
         ]
         fields = admin_instance.get_grpc_detail_fields()
         assert fields == [("Product Name", "name"), ("Cost", "price")]
+
+    def test_get_grpc_detail_fields_excludes_list_only(self):
+        class DetailControlResource(BaseGrpcResource):
+            class Meta:
+                app_label = "shop"
+                model_name = "detailcontrol"
+
+            fields = [
+                CharFieldConfig(name="name"),
+                CharFieldConfig(name="badge", list_only=True),
+                CharFieldConfig(name="note", detail_only=True),
+            ]
+
+        class DetailControlAdmin(GrpcResourceAdmin):
+            resource_class = DetailControlResource
+            adapter_class = MockAdapter
+
+        admin = DetailControlAdmin(admin_site=AdminSite())
+        assert admin.get_grpc_detail_fields() == [("Name", "name"), ("Note", "note")]
 
 
 class TestGrpcResourceAdminAdapter:
@@ -321,6 +490,33 @@ class TestGrpcResourceAdminActions:
         request = RequestFactory().get("/")
         actions = admin_instance.get_actions(request)
         assert "delete_selected" not in actions
+
+    def test_apply_grpc_bulk_update_updates_selected_pks(self):
+        class UpdateAdapter(MockAdapter):
+            def __init__(self):
+                super().__init__()
+                self.updated = []
+
+            def update(self, resource_class, pk, data):
+                self.updated.append((pk, data))
+                return ProductResource(id=pk, **data)
+
+        adapter = UpdateAdapter()
+
+        class UpdateAdmin(GrpcResourceAdmin):
+            resource_class = ProductResource
+            adapter_class = adapter
+
+        admin = UpdateAdmin(admin_site=AdminSite())
+        request = RequestFactory().post("/")
+        qs = Mock()
+        qs._selected_pks = ["1", "2"]
+
+        updated, errors = admin.apply_grpc_bulk_update(request, qs, {"active": True})
+
+        assert updated == 2
+        assert errors == 0
+        assert adapter.updated == [("1", {"active": True}), ("2", {"active": True})]
 
 
 class TestGrpcChangeList:

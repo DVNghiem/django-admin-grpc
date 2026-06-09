@@ -47,8 +47,8 @@ class ProductAdmin(GrpcResourceAdmin):
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `type` | `str` | Filter type: `boolean`, `choices`, or `text`. |
-| `choices` | `list[tuple]` | Required when `type="choices"`. |
+| `type` | `str` | Filter type: `boolean`, `choices`, `text`, `number_range`, `date_range`, or `multi_choices`. |
+| `choices` | `list[tuple]` | Required when `type="choices"` or `type="multi_choices"`. |
 | `label` | `str` | Custom label for the filter. |
 
 ## Supported Filter Types
@@ -87,6 +87,43 @@ Renders a text input. The entered value is passed to the adapter as `name=widget
 ```python
 grpc_filter_config = {
     "name": {"type": "text", "label": "Product Name"},
+}
+```
+
+### Number Range Filter
+
+Renders min/max inputs. The values are passed to the adapter as `price__gte=10` and `price__lte=100`.
+
+```python
+grpc_filter_config = {
+    "price": {"type": "number_range"},
+}
+```
+
+### Date Range Filter
+
+Renders start/end date inputs. The values are passed to the adapter as `created_at__gte=2024-01-01` and `created_at__lte=2024-12-31`.
+
+```python
+grpc_filter_config = {
+    "created_at": {"type": "date_range"},
+}
+```
+
+### Multi-Select Choices Filter
+
+Renders a multi-select with the provided choices. Supports comma-separated values (`status=active,pending`) or repeated parameters (`status=active&status=pending`). Values are serialized as a list: `{"status": ["active", "pending"]}`.
+
+```python
+grpc_filter_config = {
+    "status": {
+        "type": "multi_choices",
+        "choices": [
+            ("active", "Active"),
+            ("pending", "Pending"),
+            ("archived", "Archived"),
+        ],
+    },
 }
 ```
 

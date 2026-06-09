@@ -122,6 +122,8 @@ class FormBuilder:
         for fc in resource_class.get_field_configs():
             if field_names is not None and fc.name not in field_names:
                 continue
+            if fc.readonly or not fc.editable or fc.detail_only or fc.list_only:
+                continue
             field = cls._make_form_field(fc, widgets)
             if field is not None:
                 form_fields[fc.name] = field
