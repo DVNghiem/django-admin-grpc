@@ -102,6 +102,64 @@ class TestFormBuilderBuild:
         assert isinstance(field, ModelPKChoiceField)
         assert field.required is True
 
+    def test_fk_field_with_static_choices_uses_select(self):
+        class StaticFKResource(BaseGrpcResource):
+            class Meta:
+                app_label = "test"
+                model_name = "staticfk"
+
+            fields = [
+                FKFieldConfig(
+                    name="owner_id",
+                    label="Owner",
+                    choices=[("1", "Alice"), ("2", "Bob")],
+                )
+            ]
+
+        form_class = FormBuilder.build(StaticFKResource)
+        field = form_class.base_fields["owner_id"]
+        assert isinstance(field, forms.ChoiceField)
+        assert isinstance(field.widget, forms.Select)
+        assert list(field.choices) == [("", "---"), ("1", "Alice"), ("2", "Bob")]
+
+    def test_fk_field_with_choices_loader_uses_select(self):
+        def load_owners():
+            return [("1", "Alice"), ("2", "Bob")]
+
+        class ServiceFKResource(BaseGrpcResource):
+            class Meta:
+                app_label = "test"
+                model_name = "servicefk"
+
+            fields = [
+                FKFieldConfig(
+                    name="owner_id",
+                    label="Owner",
+                    service="owners",
+                    choices_loader=load_owners,
+                )
+            ]
+
+        form_class = FormBuilder.build(ServiceFKResource)
+        field = form_class.base_fields["owner_id"]
+        assert isinstance(field, forms.ChoiceField)
+        assert isinstance(field.widget, forms.Select)
+        assert list(field.choices) == [("", "---"), ("1", "Alice"), ("2", "Bob")]
+
+    def test_service_fk_without_loader_still_uses_select(self):
+        class EmptyServiceFKResource(BaseGrpcResource):
+            class Meta:
+                app_label = "test"
+                model_name = "emptyservicefk"
+
+            fields = [FKFieldConfig(name="owner_id", label="Owner", service="owners")]
+
+        form_class = FormBuilder.build(EmptyServiceFKResource)
+        field = form_class.base_fields["owner_id"]
+        assert isinstance(field, forms.ChoiceField)
+        assert isinstance(field.widget, forms.Select)
+        assert list(field.choices) == [("", "---")]
+
     def test_custom_widget(self):
         form_class = FormBuilder.build(
             TestResource, widgets={"name": forms.Textarea()}

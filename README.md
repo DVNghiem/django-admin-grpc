@@ -117,7 +117,7 @@ class NetworkRule(BaseGrpcResource):
 | `float` | `NumberInput` | Decimal numbers. |
 | `boolean` | `CheckboxInput` | Defaults to `False` unless `initial=True`. |
 | `choices` | `Select` | Provide `choices=[("a", "A"), ...]`. |
-| `fk` | `Select` | Use `model="app.Model"` for Django lookups or `service="..."` for gRPC lookups. |
+| `fk` | `Select` | Model FKs load options automatically; service/custom FKs use `choices` or `choices_loader`. |
 | `date` / `datetime` | `DateInput` / `DateTimeInput` | Stored as string; validate in the adapter. |
 
 **Common field options (all subclasses):**
@@ -136,9 +136,11 @@ class NetworkRule(BaseGrpcResource):
 - `FKFieldConfig`:
   - `model` — `"app_label.ModelName"` for Django FK resolution.
   - `to_field` — model field to use as the FK value.
-  - `display_field` — field to show when resolving FK labels.
+  - `display_field` — field to show in detail views; omitted means show the raw FK value.
   - `service` — service name in the adapter registry for gRPC FK resolution.
   - `get_method` — adapter method to call for gRPC FK resolution (default: `get`).
+  - `choices` — static `(value, label)` select options for service/custom FK fields.
+  - `choices_loader` — callable returning `(value, label)` options for service/custom FK fields.
 
 ---
 

@@ -7,6 +7,7 @@ Django admin can render lists, forms and detail views without touching the ORM.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
@@ -121,6 +122,8 @@ class FKFieldConfig(BaseFieldConfig):
     display_field: str | None = None
     service: str | None = None
     get_method: str = "get"
+    choices: list[tuple[Any, str]] = field(default_factory=list)
+    choices_loader: Callable[[], Iterable[tuple[Any, str]]] | None = None
 
     @property
     def type(self) -> str:

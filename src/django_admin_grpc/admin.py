@@ -603,6 +603,8 @@ class GrpcResourceAdmin(ModelAdmin):
 
         if config is None or not isinstance(config, FKFieldConfig):
             return fk_id if fk_id is not None else None  # type: ignore[return-value]
+        if not config.display_field:
+            return fk_id if fk_id is not None else None  # type: ignore[return-value]
         if not fk_id:
             return None
 
@@ -613,10 +615,7 @@ class GrpcResourceAdmin(ModelAdmin):
                 app_label, model_name = model_path.split(".")
                 model = apps.get_model(app_label, model_name)
                 obj = model.objects.get(pk=fk_id)
-                display_field = getattr(config, "display_field", None)
-                if display_field:
-                    return str(getattr(obj, display_field, str(obj)))
-                return str(obj)
+                return str(getattr(obj, config.display_field, str(obj)))
             except (ValueError, LookupError) as e:
                 logger.warning(
                     "resolve_fk_value: Django lookup failed for %s model=%s pk=%s: %s",
@@ -639,7 +638,6 @@ class GrpcResourceAdmin(ModelAdmin):
         # gRPC service lookup
         if getattr(config, "service", None):
             service = cast(str, config.service)
-            display_field = getattr(config, "display_field", "")
             get_method = getattr(config, "get_method", "get")
             try:
                 from django_admin_grpc.registry import adapter_registry
@@ -658,9 +656,7 @@ class GrpcResourceAdmin(ModelAdmin):
                     result = getattr(adapter, get_method)(fk_id)
                 if result is None:
                     return None
-                if display_field:
-                    return str(getattr(result, display_field, str(result)))
-                return str(result)
+                return str(getattr(result, config.display_field, str(result)))
             except Exception as e:
                 logger.warning(
                     "resolve_fk_value: gRPC lookup failed for %s service=%s pk=%s: %s",

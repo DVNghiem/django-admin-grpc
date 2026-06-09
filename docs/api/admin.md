@@ -189,7 +189,7 @@ Return detail rows with label, value, and type flags.
 
 #### `resolve_fk_value(field_name, config, fk_id) -> str | None`
 
-Resolve a foreign key value to a display string. Supports Django model lookups and gRPC service lookups.
+Resolve a foreign key value to a display string when `FKFieldConfig.display_field` is configured. Supports Django model lookups and gRPC service lookups. If `display_field` is not configured, the raw FK value is returned.
 
 ### Permission Methods
 

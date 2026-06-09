@@ -490,16 +490,23 @@ class TestGrpcResourceAdminResolveFk:
 
     def test_falsy_fk_id_returns_fk_id(self, admin_instance):
         config = FKFieldConfig(name="category_id", model="auth.User")
-        # Empty string with a model configured triggers lookup which fails → None
-        assert admin_instance.resolve_fk_value("category_id", config, "") is None
+        assert admin_instance.resolve_fk_value("category_id", config, "") == ""
         assert admin_instance.resolve_fk_value("category_id", config, None) is None
 
     def test_invalid_model_path(self, admin_instance):
         config = FKFieldConfig(name="x", model="NoDot")
+        assert admin_instance.resolve_fk_value("x", config, 1) == 1
+
+    def test_invalid_model_path_with_display_field_returns_none(self, admin_instance):
+        config = FKFieldConfig(name="x", model="NoDot", display_field="name")
         assert admin_instance.resolve_fk_value("x", config, 1) is None
 
     def test_model_does_not_exist(self, admin_instance):
         config = FKFieldConfig(name="x", model="nonexistent.Model")
+        assert admin_instance.resolve_fk_value("x", config, 1) == 1
+
+    def test_model_does_not_exist_with_display_field_returns_none(self, admin_instance):
+        config = FKFieldConfig(name="x", model="nonexistent.Model", display_field="name")
         assert admin_instance.resolve_fk_value("x", config, 1) is None
 
     def test_service_lookup(self, admin_instance, reset_registry):
@@ -514,6 +521,24 @@ class TestGrpcResourceAdminResolveFk:
         config = FKFieldConfig(name="owner", service="users", display_field="name")
         result = admin_instance.resolve_fk_value("owner", config, "1")
         assert result == "Alice"
+
+    def test_service_lookup_without_display_field_returns_fk_id(self, admin_instance, reset_registry):
+        class FakeAdapter:
+            service_name = "users"
+            def get(self, pk):
+                obj = Mock()
+                obj.name = "Alice"
+                return obj
+
+        reset_registry.register("users", FakeAdapter())
+        config = FKFieldConfig(name="owner", service="users")
+        result = admin_instance.resolve_fk_value("owner", config, "1")
+        assert result == "1"
+
+    def test_model_lookup_without_display_field_returns_fk_id(self, admin_instance):
+        config = FKFieldConfig(name="owner", model="auth.User")
+        result = admin_instance.resolve_fk_value("owner", config, "1")
+        assert result == "1"
 
     def test_service_lookup_typeerror(self, admin_instance, reset_registry):
         class StrictAdapter:
@@ -530,6 +555,11 @@ class TestGrpcResourceAdminResolveFk:
 
     def test_service_no_adapter(self, admin_instance):
         config = FKFieldConfig(name="ref", service="missing")
+        result = admin_instance.resolve_fk_value("ref", config, "1")
+        assert result == "1"
+
+    def test_service_no_adapter_with_display_field_returns_none(self, admin_instance):
+        config = FKFieldConfig(name="ref", service="missing", display_field="name")
         result = admin_instance.resolve_fk_value("ref", config, "1")
         assert result is None
 

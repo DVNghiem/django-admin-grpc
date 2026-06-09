@@ -162,7 +162,7 @@ Methods:
 | `ChoicesFieldConfig` | choices | `choices=[(value, label), ...]` |
 | `DateTimeFieldConfig` | datetime | — |
 | `DateFieldConfig` | date | — |
-| `FKFieldConfig` | fk | `model`, `to_field`, `display_field`, `service`, `get_method` |
+| `FKFieldConfig` | fk | `model`, `to_field`, `display_field`, `service`, `get_method`, `choices`, `choices_loader` |
 
 All field configs support: `name`, `label`, `required`, `help_text`, `initial`, `source`
 
@@ -337,9 +337,24 @@ class ProductAdmin(GrpcResourceAdmin):
 # Django ORM lookup
 FKFieldConfig(name="category_id", model="catalog.Category", display_field="name")
 
-# gRPC service lookup
-FKFieldConfig(name="partner_id", service="partners", display_field="company_name")
+# gRPC service lookup with user-defined select options
+def load_partners():
+    # User-defined logic: call another service, cache results, etc.
+    return [("1", "Acme"), ("2", "Globex")]
+
+FKFieldConfig(
+    name="partner_id",
+    service="partners",
+    display_field="company_name",
+    choices_loader=load_partners,
+)
 ```
+
+FK fields always render as selects in create/update forms. Model-backed FKs load
+options automatically from the Django database. Service/custom FKs should provide
+`choices` or `choices_loader`; otherwise the select contains only the empty option.
+In detail views, `display_field` controls related-object display. If it is omitted,
+the raw FK value is shown.
 
 ### Bulk Actions
 

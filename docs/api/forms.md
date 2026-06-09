@@ -88,7 +88,7 @@ Create a single form field from a field config.
 | `float` | `FloatField` | — |
 | `boolean` | `BooleanField` | Always `required=False`. |
 | `choices` | `ChoiceField` | Prepends `"---"` option. |
-| `fk` | `ModelPKChoiceField` or `CharField` | Django model FK or plain text. |
+| `fk` | `ModelPKChoiceField` or `ChoiceField` | Django model FK or select options from `choices` / `choices_loader`. |
 | `date` / `datetime` | `CharField` | With date/datetime widget. |
 | unknown | `CharField` | Logs a warning. |
 

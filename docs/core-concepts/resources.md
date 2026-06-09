@@ -99,9 +99,11 @@ All field config subclasses accept these parameters:
 | `ChoicesFieldConfig` | `choices` | `list[tuple[str, str]]` | `[]` | `(value, label)` pairs for `choices` fields. |
 | `FKFieldConfig` | `model` | `str \| None` | `None` | `"app_label.ModelName"` for Django FK resolution. |
 | `FKFieldConfig` | `to_field` | `str \| None` | `None` | Model field to use as the FK value. |
-| `FKFieldConfig` | `display_field` | `str \| None` | `None` | Field to show when resolving FK labels. |
+| `FKFieldConfig` | `display_field` | `str \| None` | `None` | Field to show when resolving FK labels in detail views. If omitted, the raw FK value is shown. |
 | `FKFieldConfig` | `service` | `str \| None` | `None` | Service name in the adapter registry for gRPC FK resolution. |
 | `FKFieldConfig` | `get_method` | `str` | `"get"` | Adapter method to call for gRPC FK resolution. |
+| `FKFieldConfig` | `choices` | `list[tuple[Any, str]]` | `[]` | Static select options for custom/service FK fields. |
+| `FKFieldConfig` | `choices_loader` | `Callable[[], Iterable[tuple[Any, str]]] \| None` | `None` | User-provided loader for service/custom FK select options. |
 
 ## Class Methods
 
@@ -227,6 +229,11 @@ class Order(BaseGrpcResource):
 ```python
 from django_admin_grpc.resources import CharFieldConfig, FKFieldConfig
 
+
+def load_categories():
+    # User-defined logic: call another service, cache results, etc.
+    return [("1", "Hardware"), ("2", "Software")]
+
 class Product(BaseGrpcResource):
     class Meta:
         app_label = "catalog"
@@ -241,6 +248,7 @@ class Product(BaseGrpcResource):
             service="catalog_category",
             get_method="get_category",
             display_field="name",
+            choices_loader=load_categories,
         ),
     ]
 ```

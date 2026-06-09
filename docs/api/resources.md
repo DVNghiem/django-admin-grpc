@@ -116,7 +116,7 @@ All concrete classes inherit from `BaseFieldConfig` and add a read-only `type` p
 | `ChoicesFieldConfig` | `choices` | `choices: list[tuple[str, str]] = []` |
 | `DateFieldConfig` | `date` | — |
 | `DateTimeFieldConfig` | `datetime` | — |
-| `FKFieldConfig` | `fk` | `model`, `to_field`, `display_field`, `service`, `get_method` |
+| `FKFieldConfig` | `fk` | `model`, `to_field`, `display_field`, `service`, `get_method`, `choices`, `choices_loader` |
 
 ## `FakeModelMeta`
 

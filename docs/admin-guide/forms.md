@@ -219,18 +219,25 @@ FKFieldConfig(
 )
 
 # gRPC service FK
+def load_categories():
+    return [("1", "Hardware"), ("2", "Software")]
+
 FKFieldConfig(
     name="category_id",
     service="catalog_category",
     get_method="get_category",
     display_field="name",
+    choices_loader=load_categories,
 )
 ```
 
-Generates a `ModelPKChoiceField` (for Django model FKs) or a `CharField` (for gRPC service FKs).
+Generates a select field for every FK. Django model FKs are populated automatically from the database. Service-backed FKs should provide `choices` or `choices_loader`; without them the field still renders as a select, but only contains the empty option.
 
 !!! info "ModelPKChoiceField"
     `ModelPKChoiceField` is a custom `ModelChoiceField` that returns the raw primary key value instead of the model instance. This is what gRPC services typically expect.
+
+!!! info "Display fields"
+    Set `display_field="name"` to show a related object's `name` in detail views. If `display_field` is omitted, django-admin-grpc shows the raw FK value.
 
 ### Date / DateTime Fields
 

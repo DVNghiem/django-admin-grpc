@@ -26,6 +26,15 @@ class ModelPKChoiceField(forms.ModelChoiceField):
     object.
     """
 
+    def __init__(self, *args: Any, display_field: str | None = None, **kwargs: Any) -> None:
+        self.display_field = display_field
+        super().__init__(*args, **kwargs)
+
+    def label_from_instance(self, obj: Any) -> str:
+        if self.display_field:
+            return str(getattr(obj, self.display_field, obj))
+        return super().label_from_instance(obj)
+
     def to_python(self, value: Any) -> Any:
         if not value:
             return None
@@ -272,6 +281,17 @@ class FormBuilder:
         config: Any,
         widget: Any | None = None,
     ) -> forms.Field:
+        choices = cls._get_fk_choices(config)
+        if choices is not None:
+            return forms.ChoiceField(
+                label=config.label,
+                required=config.required,
+                help_text=config.help_text,
+                initial=config.initial,
+                choices=[("", "---"), *choices],
+                widget=widget,
+            )
+
         model_path = config.model or ""
         if model_path:
             try:
@@ -288,16 +308,26 @@ class FormBuilder:
                 required=config.required,
                 help_text=config.help_text,
                 to_field_name=config.to_field,
+                display_field=config.display_field,
                 empty_label="--- Select ---",
                 widget=widget,
             )
 
-        # No Django model configured — fall back to a plain CharField so
-        # service-based FKs still produce a working form.
-        return forms.CharField(
+        # Service/custom FKs must still render as selects. Users can populate
+        # options with choices or choices_loader.
+        return forms.ChoiceField(
             label=config.label,
             required=config.required,
             help_text=config.help_text or "Enter the related ID.",
+            choices=[("", "---")],
             initial=config.initial,
             widget=widget,
         )
+
+    @staticmethod
+    def _get_fk_choices(config: Any) -> list[tuple[Any, str]] | None:
+        if config.choices:
+            return list(config.choices)
+        if config.choices_loader is not None:
+            return list(config.choices_loader())
+        return None
