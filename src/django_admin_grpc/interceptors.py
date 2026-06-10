@@ -29,7 +29,12 @@ class _MutableCallDetails(grpc.ClientCallDetails):
     pass
 
 
-class TraceClientInterceptor(grpc.UnaryUnaryClientInterceptor):
+class TraceClientInterceptor(
+    grpc.UnaryUnaryClientInterceptor,
+    grpc.UnaryStreamClientInterceptor,
+    grpc.StreamUnaryClientInterceptor,
+    grpc.StreamStreamClientInterceptor,
+):
     """
     Injects trace headers (e.g. *x-request-id*, *x-trace-id*) into every
     outgoing gRPC call and emits structured latency logs.
@@ -45,19 +50,12 @@ class TraceClientInterceptor(grpc.UnaryUnaryClientInterceptor):
     ):
         self._provider = trace_context_provider or _default_provider
 
-    def intercept_unary_unary(
-        self,
-        continuation: Callable,
-        client_call_details: grpc.ClientCallDetails,
-        request: Any,
-    ) -> Any:
+    def _build_call_details_with_trace(
+        self, client_call_details: grpc.ClientCallDetails
+    ) -> grpc.ClientCallDetails:
+        """Return a copy of call details with trace metadata injected."""
         ctx = self._provider()
-
-        trace_meta = [
-            (k, v)
-            for k, v in ctx.items()
-            if v is not None
-        ]
+        trace_meta = [(k, v) for k, v in ctx.items() if v is not None]
 
         new_details = _MutableCallDetails()
         new_details.method = client_call_details.method
@@ -70,7 +68,15 @@ class TraceClientInterceptor(grpc.UnaryUnaryClientInterceptor):
             client_call_details, "compression", None
         )
         new_details.metadata = list(client_call_details.metadata or []) + trace_meta
+        return new_details
 
+    def intercept_unary_unary(
+        self,
+        continuation: Callable,
+        client_call_details: grpc.ClientCallDetails,
+        request: Any,
+    ) -> Any:
+        new_details = self._build_call_details_with_trace(client_call_details)
         method = client_call_details.method
         logger.debug("grpc.call.start  method=%s", method)
 
@@ -94,3 +100,30 @@ class TraceClientInterceptor(grpc.UnaryUnaryClientInterceptor):
                 exc.details() if hasattr(exc, "details") else str(exc),
             )
             raise
+
+    def intercept_unary_stream(
+        self,
+        continuation: Callable,
+        client_call_details: grpc.ClientCallDetails,
+        request: Any,
+    ) -> Any:
+        new_details = self._build_call_details_with_trace(client_call_details)
+        return continuation(new_details, request)
+
+    def intercept_stream_unary(
+        self,
+        continuation: Callable,
+        client_call_details: grpc.ClientCallDetails,
+        request_iterator: Any,
+    ) -> Any:
+        new_details = self._build_call_details_with_trace(client_call_details)
+        return continuation(new_details, request_iterator)
+
+    def intercept_stream_stream(
+        self,
+        continuation: Callable,
+        client_call_details: grpc.ClientCallDetails,
+        request_iterator: Any,
+    ) -> Any:
+        new_details = self._build_call_details_with_trace(client_call_details)
+        return continuation(new_details, request_iterator)

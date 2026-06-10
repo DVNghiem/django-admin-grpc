@@ -23,10 +23,27 @@ DEFAULTS: dict[str, Any] = {
 def get_setting(name: str) -> Any:
     """Return a django-admin-grpc setting, falling back to the default.
 
+    Resolution order:
+    1. ``settings.GRPC_ADMIN[name]`` (nested dict — preferred)
+    2. ``settings.<name>`` (flat attribute — backward compatibility)
+    3. Built-in ``DEFAULTS``
+
     If the resolved value is a dotted Python path string and the setting
     key ends with ``_CLASS`` or ``_TEMPLATE``, it is imported automatically.
     """
-    value = getattr(settings, name, DEFAULTS.get(name))
+    # 1. Try nested GRPC_ADMIN dict first (preferred)
+    grpc_admin = getattr(settings, "GRPC_ADMIN", None)
+    if grpc_admin is not None:
+        if name in grpc_admin:
+            value = grpc_admin[name]
+        elif name.startswith("GRPC_ADMIN_") and name[11:] in grpc_admin:
+            value = grpc_admin[name[11:]]
+        else:
+            value = getattr(settings, name, DEFAULTS.get(name))
+    else:
+        # 2. Fall back to flat setting attribute
+        value = getattr(settings, name, DEFAULTS.get(name))
+
     if value is None:
         return None
     if isinstance(value, str) and (name.endswith("_CLASS") or name.endswith("_TEMPLATE")):

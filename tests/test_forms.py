@@ -301,3 +301,33 @@ class TestModelPKChoiceField:
         mock_qs = Mock()
         field = ModelPKChoiceField(queryset=mock_qs)
         assert field.prepare_value("raw") == "raw"
+
+    def test_to_python_uuid_pk_not_coerced(self):
+        """Regression: UUID-like string PKs must not be coerced to int."""
+        mock_model = Mock()
+        mock_obj = Mock()
+        mock_obj.pk = "550e8400-e29b-41d4-a716-446655440000"
+        mock_qs = Mock()
+        mock_qs.get.return_value = mock_obj
+        mock_qs.model = mock_model
+        mock_qs.all.return_value = mock_qs
+
+        field = ModelPKChoiceField(queryset=mock_qs)
+        result = field.to_python("550e8400-e29b-41d4-a716-446655440000")
+        assert result == "550e8400-e29b-41d4-a716-446655440000"
+        assert isinstance(result, str)  # Must remain string, not int
+
+    def test_to_python_digit_string_pk_not_coerced(self):
+        """Regression: string PK that looks like digits must not become int."""
+        mock_model = Mock()
+        mock_obj = Mock()
+        mock_obj.pk = "42"  # String PK
+        mock_qs = Mock()
+        mock_qs.get.return_value = mock_obj
+        mock_qs.model = mock_model
+        mock_qs.all.return_value = mock_qs
+
+        field = ModelPKChoiceField(queryset=mock_qs)
+        result = field.to_python("42")
+        assert result == "42"
+        assert isinstance(result, str)  # Must remain string

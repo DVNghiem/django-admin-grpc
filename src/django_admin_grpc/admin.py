@@ -328,7 +328,7 @@ class GrpcChangeList(ChangeList):
         return GrpcFakeQuerySet(self.model)
 
     def get_results(self, request: HttpRequest) -> None:
-        page_num = self.page_num
+        page_num = self.page_num or 1
         page_size = self.list_per_page
         filters = self._grpc_model_admin.get_grpc_filters(request)
 
@@ -438,6 +438,7 @@ class GrpcResourceAdmin(ModelAdmin):
         self._resource_class: type[BaseGrpcResource] = self.resource_class
         self._fake_model = self._resource_class.admin_model()
         super().__init__(self._fake_model, admin_site)  # type: ignore[arg-type]
+        self._adapter: BaseGrpcServiceAdapter | None = None
 
     # ── Template resolution ────────────────────────────────────────────────
 
@@ -567,15 +568,19 @@ class GrpcResourceAdmin(ModelAdmin):
 
     def get_adapter(self) -> BaseGrpcServiceAdapter | None:
         """Return the gRPC adapter for this admin."""
+        if self._adapter is not None:
+            return self._adapter
         if self.adapter_class is not None:
-            # Instantiate if it is a class
             if isinstance(self.adapter_class, type):
-                return self.adapter_class()
-            return self.adapter_class
+                self._adapter = self.adapter_class()
+                return self._adapter
+            self._adapter = self.adapter_class
+            return self._adapter
         if self.service_name:
             from django_admin_grpc.registry import adapter_registry
 
-            return adapter_registry.get_adapter(self.service_name)
+            self._adapter = adapter_registry.get_adapter(self.service_name)
+            return self._adapter
         return None
 
     def get_changelist(self, request: HttpRequest, **kwargs: Any) -> type[GrpcChangeList]:
@@ -689,21 +694,21 @@ class GrpcResourceAdmin(ModelAdmin):
         return adapter is not None and adapter.supports_delete
 
     def _can_create(self) -> bool:
-        return self._has_form_fields() and self._adapter_supports_create()
+        return self.grpc_enable_create and self._has_form_fields() and self._adapter_supports_create()
 
     def _can_update(self) -> bool:
-        return self._has_form_fields() and self._adapter_supports_update()
+        return self.grpc_enable_update and self._has_form_fields() and self._adapter_supports_update()
 
     def _can_delete(self) -> bool:
         return self.grpc_enable_delete and self._adapter_supports_delete()
 
     def has_add_permission(self, request: HttpRequest) -> bool:
-        return self.has_grpc_add_permission(request) and self.grpc_enable_create and self._can_create()
+        return self.has_grpc_add_permission(request) and self._can_create()
 
     def has_change_permission(
         self, request: HttpRequest, obj: Any = None
     ) -> bool:
-        return self.has_grpc_change_permission(request, obj=obj) and self.has_view_permission(request, obj=obj)
+        return self.has_grpc_change_permission(request, obj=obj) and self.has_view_permission(request, obj=obj) and self._can_update()
 
     def has_delete_permission(
         self, request: HttpRequest, obj: Any = None
@@ -867,9 +872,9 @@ class GrpcResourceAdmin(ModelAdmin):
                     )
                     return None
                 try:
-                    result = getattr(adapter, get_method)(pk=fk_id)
+                    result = getattr(adapter, get_method)(self._resource_class, pk=fk_id)
                 except TypeError:
-                    result = getattr(adapter, get_method)(fk_id)
+                    result = getattr(adapter, get_method)(self._resource_class, fk_id)
                 if result is None:
                     return None
                 return str(getattr(result, config.display_field, str(result)))

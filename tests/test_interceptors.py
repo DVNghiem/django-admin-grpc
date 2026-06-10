@@ -146,3 +146,66 @@ class TestTraceClientInterceptor:
         assert passed_details.credentials is call_details.credentials
         assert passed_details.wait_for_ready is True
         assert passed_details.compression is grpc.Compression.Gzip
+
+    def test_intercept_unary_stream_injects_trace_headers(self):
+        """Regression: streaming calls must also receive trace headers."""
+        interceptor = TraceClientInterceptor(
+            trace_context_provider=lambda: {"x-request-id": "stream"}
+        )
+        continuation = Mock(return_value=iter([Mock()]))
+        call_details = Mock(spec=grpc.ClientCallDetails)
+        call_details.method = "/service/stream"
+        call_details.timeout = None
+        call_details.credentials = None
+        call_details.metadata = []
+        call_details.wait_for_ready = None
+        call_details.compression = None
+
+        result = interceptor.intercept_unary_stream(
+            continuation, call_details, Mock()
+        )
+        assert result is not None
+        passed_details = continuation.call_args[0][0]
+        assert ("x-request-id", "stream") in passed_details.metadata
+
+    def test_intercept_stream_unary_injects_trace_headers(self):
+        """Regression: stream-unary calls must also receive trace headers."""
+        interceptor = TraceClientInterceptor(
+            trace_context_provider=lambda: {"x-request-id": "stream"}
+        )
+        continuation = Mock(return_value=Mock())
+        call_details = Mock(spec=grpc.ClientCallDetails)
+        call_details.method = "/service/stream"
+        call_details.timeout = None
+        call_details.credentials = None
+        call_details.metadata = []
+        call_details.wait_for_ready = None
+        call_details.compression = None
+
+        result = interceptor.intercept_stream_unary(
+            continuation, call_details, iter([Mock()])
+        )
+        assert result is not None
+        passed_details = continuation.call_args[0][0]
+        assert ("x-request-id", "stream") in passed_details.metadata
+
+    def test_intercept_stream_stream_injects_trace_headers(self):
+        """Regression: stream-stream calls must also receive trace headers."""
+        interceptor = TraceClientInterceptor(
+            trace_context_provider=lambda: {"x-request-id": "stream"}
+        )
+        continuation = Mock(return_value=iter([Mock()]))
+        call_details = Mock(spec=grpc.ClientCallDetails)
+        call_details.method = "/service/stream"
+        call_details.timeout = None
+        call_details.credentials = None
+        call_details.metadata = []
+        call_details.wait_for_ready = None
+        call_details.compression = None
+
+        result = interceptor.intercept_stream_stream(
+            continuation, call_details, iter([Mock()])
+        )
+        assert result is not None
+        passed_details = continuation.call_args[0][0]
+        assert ("x-request-id", "stream") in passed_details.metadata

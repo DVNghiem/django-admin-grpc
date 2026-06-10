@@ -198,9 +198,15 @@ class TestGrpcResourceAdminPermissions:
         request = RequestFactory().get("/")
         assert admin_instance.has_view_permission(request) is True
 
-    def test_has_change_permission_delegates_to_view(self, admin_instance):
+    def test_has_change_permission_delegates_to_view(self, admin_instance, reset_registry):
+        reset_registry.register("products", MockAdapter())
+        admin_instance.grpc_enable_update = True
         request = RequestFactory().get("/")
         assert admin_instance.has_change_permission(request) is True
+
+    def test_has_change_permission_false_when_update_disabled(self, admin_instance):
+        request = RequestFactory().get("/")
+        assert admin_instance.has_change_permission(request) is False
 
     def test_grpc_permission_hooks_can_deny_actions(self, reset_registry):
         class HookAdmin(GrpcResourceAdmin):
@@ -715,6 +721,41 @@ class TestGrpcChangeList:
         cl.get_results(request)
         assert cl.result_list is not None
 
+    def test_get_results_page_num_zero_normalized_to_one(self, admin_instance, reset_registry):
+        """Regression test: page_num=0 must be normalized to page=1 for 1-indexed adapter."""
+        from unittest.mock import MagicMock
+
+        adapter = MagicMock()
+        adapter.list.return_value = PagedResult(items=[], total=0)
+        reset_registry.register("products", adapter)
+
+        request = RequestFactory().get("/")
+        cl = GrpcChangeList(
+            request=request,
+            model=admin_instance.model,
+            list_display=["name"],
+            list_display_links=["name"],
+            list_filter=[],
+            date_hierarchy=None,
+            search_fields=[],
+            list_select_related=False,
+            list_per_page=25,
+            list_max_show_all=200,
+            list_editable=[],
+            model_admin=admin_instance,
+            sortable_by=["name"],
+            search_help_text="",
+        )
+        # Simulate Django setting page_num to 0 (0-indexed)
+        cl.page_num = 0
+        cl.get_results(request)
+
+        # Verify adapter.list was called with page=1, not page=0
+        # (Django ChangeList.__init__ calls get_results once, then we call it explicitly)
+        adapter.list.assert_called()
+        call_kwargs = adapter.list.call_args
+        assert call_kwargs.kwargs.get("page") == 1, f"Expected page=1, got page={call_kwargs.kwargs.get('page')}"
+
 
 class TestGrpcResourceAdminDetailRows:
     def test_get_grpc_detail_rows(self, admin_instance):
@@ -759,7 +800,7 @@ class TestGrpcResourceAdminResolveFk:
     def test_service_lookup(self, admin_instance, reset_registry):
         class FakeAdapter:
             service_name = "users"
-            def get(self, pk):
+            def get(self, resource_class, pk):
                 obj = Mock()
                 obj.name = "Alice"
                 return obj
@@ -772,7 +813,7 @@ class TestGrpcResourceAdminResolveFk:
     def test_service_lookup_without_display_field_returns_fk_id(self, admin_instance, reset_registry):
         class FakeAdapter:
             service_name = "users"
-            def get(self, pk):
+            def get(self, resource_class, pk):
                 obj = Mock()
                 obj.name = "Alice"
                 return obj
@@ -790,7 +831,7 @@ class TestGrpcResourceAdminResolveFk:
     def test_service_lookup_typeerror(self, admin_instance, reset_registry):
         class StrictAdapter:
             service_name = "strict"
-            def get(self, pk_id):
+            def get(self, resource_class, pk_id):
                 obj = Mock()
                 obj.name = "Bob"
                 return obj
@@ -809,6 +850,28 @@ class TestGrpcResourceAdminResolveFk:
         config = FKFieldConfig(name="ref", service="missing", display_field="name")
         result = admin_instance.resolve_fk_value("ref", config, "1")
         assert result is None
+
+
+class RealSignatureAdapter(BaseGrpcServiceAdapter):
+    service_name = "real"
+
+    def list(self, resource_class, page=1, page_size=25, filters=None):
+        return PagedResult(items=[], total=0, page=page, page_size=page_size)
+
+    def get(self, resource_class, pk):
+        obj = Mock()
+        obj.name = f"Item-{pk}"
+        return obj
+
+
+class TestResolveFkValueRealAdapter:
+    def test_service_lookup_with_real_adapter_signature(self, admin_instance, reset_registry):
+        """Regression test: adapter.get() must receive resource_class argument."""
+        adapter = RealSignatureAdapter()
+        reset_registry.register("real", adapter)
+        config = FKFieldConfig(name="ref", service="real", display_field="name")
+        result = admin_instance.resolve_fk_value("ref", config, "42")
+        assert result == "Item-42"
 
 
 class TestGrpcResourceAdminDeleteSelected:
@@ -1106,6 +1169,8 @@ class TestGrpcAction:
             resource_class = ProductResource
             adapter_class = MockAdapter
             actions = ["restricted_action"]
+            grpc_enable_update = True
+            grpc_form_fields = ["name"]
 
             @grpc_action(description="Restricted", permissions=["change"])
             def restricted_action(self, request, selected_pks):

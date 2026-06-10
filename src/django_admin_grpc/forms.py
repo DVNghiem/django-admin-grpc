@@ -46,8 +46,17 @@ class ModelPKChoiceField(forms.ModelChoiceField):
                 **{self.to_field_name or "pk": value}
             )
             pk = obj.pk
-            if isinstance(pk, (int, str)) and str(pk).lstrip("-").isdigit():
-                return int(pk)
+            # Only coerce to int if the model's PK field is an integer type
+            pk_field = qs.model._meta.pk
+            if pk_field and pk_field.get_internal_type() in (
+                "AutoField", "BigAutoField", "SmallAutoField",
+                "IntegerField", "BigIntegerField", "SmallIntegerField",
+                "PositiveIntegerField", "PositiveBigIntegerField", "PositiveSmallIntegerField",
+            ):
+                try:
+                    return int(pk)
+                except (ValueError, TypeError):
+                    pass
             return pk
         except (qs.model.DoesNotExist, ValueError, TypeError):
             raise forms.ValidationError(

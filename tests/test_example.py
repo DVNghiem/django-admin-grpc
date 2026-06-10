@@ -134,6 +134,7 @@ class TestExampleAdminPermissionHooks:
             resource_class = ProductResource
             adapter_class = CatalogGrpcAdapter
             grpc_enable_create = True
+            grpc_enable_update = True
             grpc_enable_delete = True
             grpc_form_fields = ["name"]
 

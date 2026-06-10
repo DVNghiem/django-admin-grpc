@@ -275,7 +275,7 @@ class CatalogGrpcAdapter(BaseGrpcServiceAdapter):
 
     # ── Helpers ────────────────────────────────────────────────────────────
 
-    def get_category(self, pk: str) -> CategoryResource | None:
+    def get_category(self, resource_class: type[Any], pk: str) -> CategoryResource | None:
         """Fetch a single category by ID (used for FK resolution)."""
         data = CatalogGrpcAdapter._categories.get(str(pk))
         if data is None:
