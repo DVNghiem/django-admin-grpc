@@ -43,3 +43,13 @@ def reset_registry():
     adapter_registry.clear()
     yield adapter_registry
     adapter_registry.clear()
+
+
+@pytest.fixture
+def reset_async_registry():
+    """Reset the async adapter registry before/after each test."""
+    from django_admin_grpc.async_adapter import async_adapter_registry
+
+    async_adapter_registry.clear()
+    yield async_adapter_registry
+    async_adapter_registry.clear()

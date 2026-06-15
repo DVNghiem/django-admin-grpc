@@ -33,13 +33,14 @@ classifiers = [
 ]
 dependencies = [
     "Django>=5.0,<7.0",
-    "grpcio>=1.50.0",
+    "grpcio>=1.54.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",
     "pytest-django>=4.5",
+    "pytest-asyncio>=0.23",
     "pytest-cov>=4.0",
     "mypy>=1.5",
     "django-stubs>=5.0",
@@ -83,6 +84,7 @@ django_settings_module = "tests.settings"
 
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "tests.settings"
+asyncio_mode = "auto"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "--cov=django_admin_grpc --cov-report=term-missing --cov-fail-under=80"

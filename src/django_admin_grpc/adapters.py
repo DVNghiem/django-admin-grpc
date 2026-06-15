@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, cast
 
 import grpc
@@ -17,6 +18,7 @@ from django_admin_grpc.exceptions import map_grpc_error
 from django_admin_grpc.paginator import PagedResult
 
 if TYPE_CHECKING:
+    from django_admin_grpc.pool import GrpcChannelPool
     from django_admin_grpc.resources import BaseGrpcResource
 
 logger = logging.getLogger(__name__)
@@ -28,9 +30,32 @@ class BaseGrpcServiceAdapter(ABC):
 
     Attributes:
         service_name: Human-readable name used by the registry.
+        grpc_pool: Optional ``GrpcChannelPool`` used to acquire channels. When
+            set, ``get_channel`` borrows channels from the pool instead of using
+            the legacy ``self.channel`` property.
     """
 
     service_name: str = ""
+    grpc_pool: GrpcChannelPool | None = None
+
+    @contextmanager
+    def get_channel(self) -> Any:
+        """
+        Context manager that yields a usable gRPC channel.
+
+        If ``grpc_pool`` is configured, a channel is borrowed from the pool and
+        returned on exit.  Otherwise the legacy ``self.channel`` attribute is
+        yielded, preserving backward compatibility for adapters that build and
+        manage their own channel.
+
+        Adapters written before the pool feature can continue to use
+        ``self.channel`` directly without any change.
+        """
+        if self.grpc_pool is not None:
+            with self.grpc_pool.get_channel() as channel:
+                yield channel
+        else:
+            yield self.channel  # type: ignore[attr-defined]
 
     @abstractmethod
     def list(

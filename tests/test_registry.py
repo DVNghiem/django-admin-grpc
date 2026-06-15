@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from django_admin_grpc.pool import GrpcChannelPool
 from django_admin_grpc.registry import AdapterRegistry, adapter_registry
 
 
@@ -191,7 +192,17 @@ class TestAdapterRegistry:
         a1.close.assert_called_once()
         a2.close.assert_called_once()
 
-    def test_concurrent_registration(self):
+    def test_close_all_closes_adapter_pools(self):
+        registry = AdapterRegistry()
+        adapter = Mock()
+        adapter.service_name = "pooled"
+        adapter.grpc_pool = Mock(spec=GrpcChannelPool)
+        registry.register("pooled", adapter)
+        registry.close_all()
+        adapter.grpc_pool.close_all.assert_called_once()
+        adapter.close.assert_called_once()
+
+    def test_close_all_logs_pool_close_errors(self):
         registry = AdapterRegistry()
         adapters = [Mock() for _ in range(50)]
         errors: list[Exception] = []

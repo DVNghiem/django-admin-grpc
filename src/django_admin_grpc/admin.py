@@ -5,13 +5,17 @@ Django admin integration for gRPC-backed resources.
 remote gRPC service instead of the ORM.  It uses ``BaseGrpcResource`` for
 metadata and ``BaseGrpcServiceAdapter`` for transport.
 """
+
 from __future__ import annotations
 
+import asyncio
+import atexit
 import functools
 import hashlib
 import logging
+import threading
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 from urllib.parse import urlencode
 
 from django.apps import apps
@@ -24,12 +28,11 @@ from django.template.response import TemplateResponse
 from django.urls import reverse
 
 from django_admin_grpc.adapters import BaseGrpcServiceAdapter
+from django_admin_grpc.async_adapter import BaseAsyncGrpcServiceAdapter
 from django_admin_grpc.exceptions import GrpcAdminError, get_grpc_error_message
 from django_admin_grpc.models import GrpcFakeQuerySet, ModelWrapper
 from django_admin_grpc.paginator import GrpcPaginator, PagedResult, compute_filter_fingerprint
-
-if TYPE_CHECKING:
-    from django_admin_grpc.resources import BaseGrpcResource
+from django_admin_grpc.resources import BaseGrpcResource
 
 logger = logging.getLogger(__name__)
 
@@ -131,9 +134,7 @@ class GrpcChangeList(ChangeList):
         filter_info = self.get_filters(request)
         self.filter_specs = filter_info[0]
         self.has_filters = filter_info[1]
-        self.has_active_filters = (
-            filter_info[4] if len(filter_info) > 4 else bool(filter_info[2])
-        )
+        self.has_active_filters = filter_info[4] if len(filter_info) > 4 else bool(filter_info[2])
 
     def get_filters(self, request: HttpRequest) -> tuple:
         from django.contrib.admin import SimpleListFilter
@@ -148,7 +149,10 @@ class GrpcChangeList(ChangeList):
                     list_filter_item, SimpleListFilter
                 ):
                     filter_spec: Any = list_filter_item(
-                        request, params, self.model, self.model_admin  # type: ignore[arg-type]
+                        request,
+                        params,  # type: ignore[arg-type]
+                        self.model,
+                        self.model_admin,  # type: ignore[arg-type]
                     )
                     filter_specs.append(filter_spec)
                     continue
@@ -175,14 +179,10 @@ class GrpcChangeList(ChangeList):
                     field_type = filter_config.get("type", "text")
                     choices_list = filter_config.get("choices")
 
-                    if field_type == "boolean" or (
-                        field_type == "choices" and choices_list
-                    ):
+                    if field_type == "boolean" or (field_type == "choices" and choices_list):
                         from django_admin_grpc.filters import create_grpc_filter_spec
 
-                        filter_class = create_grpc_filter_spec(
-                            field_path, field_type, choices_list
-                        )
+                        filter_class = create_grpc_filter_spec(field_path, field_type, choices_list)
                         fake_field = type(
                             "FakeField",
                             (),
@@ -202,9 +202,7 @@ class GrpcChangeList(ChangeList):
                             )
                             filter_specs.append(filter_spec)
                         except Exception as e:
-                            logger.warning(
-                                "Failed to create filter for %s: %s", field_path, e
-                            )
+                            logger.warning("Failed to create filter for %s: %s", field_path, e)
                     elif field_type in ("number_range", "date_range"):
                         from django_admin_grpc.filters import (
                             GrpcDateRangeFilter,
@@ -247,9 +245,7 @@ class GrpcChangeList(ChangeList):
                     elif field_type == "multi_choices" and choices_list:
                         from django_admin_grpc.filters import create_grpc_filter_spec
 
-                        filter_class = create_grpc_filter_spec(
-                            field_path, field_type, choices_list
-                        )
+                        filter_class = create_grpc_filter_spec(field_path, field_type, choices_list)
                         fake_field = type(
                             "FakeField",
                             (),
@@ -355,7 +351,9 @@ class GrpcChangeList(ChangeList):
                 page=page_num, page_size=page_size, filters=filters
             )
             items = result.items if isinstance(result, PagedResult) else result.get("items", [])
-            total = result.total if isinstance(result, PagedResult) else result.get("total", len(items))
+            total = (
+                result.total if isinstance(result, PagedResult) else result.get("total", len(items))
+            )
             next_cursor = (
                 result.next_cursor
                 if isinstance(result, PagedResult)
@@ -365,17 +363,14 @@ class GrpcChangeList(ChangeList):
             fake_model = self._grpc_model_admin._fake_model
             fk_cache = self._grpc_model_admin._preload_fk_displays(request, items)
             self.result_list = [
-                ModelWrapper(item, fake_model._meta, fk_display_cache=fk_cache)
-                for item in items
+                ModelWrapper(item, fake_model._meta, fk_display_cache=fk_cache) for item in items
             ]
             self.result_count = total
             self.full_result_count = total
             self.can_show_all = False
             self.multi_page = self.result_count > page_size
 
-            self.paginator = GrpcPaginator(
-                self.result_list, page_size, self.result_count
-            )
+            self.paginator = GrpcPaginator(self.result_list, page_size, self.result_count)
 
             if is_cursor:
                 self.grpc_next_cursor = next_cursor
@@ -455,17 +450,13 @@ class GrpcResourceAdmin(ModelAdmin):
     grpc_detail_fields: list[Any] = []
     grpc_cursor_pagination: bool = False
 
-    def __init__(
-        self, model: type[Any] | None = None, admin_site: Any | None = None
-    ) -> None:
+    def __init__(self, model: type[Any] | None = None, admin_site: Any | None = None) -> None:
         if self.resource_class is None:
-            raise ValueError(
-                f"{self.__class__.__name__} must define resource_class"
-            )
+            raise ValueError(f"{self.__class__.__name__} must define resource_class")
         self._resource_class: type[BaseGrpcResource] = self.resource_class
         self._fake_model = self._resource_class.admin_model()
         super().__init__(self._fake_model, admin_site)  # type: ignore[arg-type]
-        self._adapter: BaseGrpcServiceAdapter | None = None
+        self._adapter: BaseGrpcServiceAdapter | BaseAsyncGrpcServiceAdapter | None = None
 
     # ── Template resolution ────────────────────────────────────────────────
 
@@ -477,9 +468,7 @@ class GrpcResourceAdmin(ModelAdmin):
         2. ``GRPC_ADMIN['DEFAULT_CHANGE_FORM_TEMPLATE']``
         3. Package default
         """
-        resource_template = getattr(
-            self._resource_class.Meta, "change_form_template", ""
-        )
+        resource_template = getattr(self._resource_class.Meta, "change_form_template", "")
         if resource_template:
             return cast(str, resource_template)
         from django_admin_grpc.settings import get_setting
@@ -497,9 +486,7 @@ class GrpcResourceAdmin(ModelAdmin):
         2. ``GRPC_ADMIN['DEFAULT_DELETE_CONFIRM_TEMPLATE']``
         3. Package default
         """
-        resource_template = getattr(
-            self._resource_class.Meta, "delete_confirm_template", ""
-        )
+        resource_template = getattr(self._resource_class.Meta, "delete_confirm_template", "")
         if resource_template:
             return cast(str, resource_template)
         from django_admin_grpc.settings import get_setting
@@ -547,7 +534,7 @@ class GrpcResourceAdmin(ModelAdmin):
             return
         for pk in selected_pks:
             try:
-                adapter.delete(self._resource_class, pk=pk)
+                self._adapter_delete(adapter, self._resource_class, pk)
                 deleted += 1
             except GrpcAdminError as exc:
                 logger.warning("gRPC delete failed for pk=%s: %s", pk, exc)
@@ -565,7 +552,9 @@ class GrpcResourceAdmin(ModelAdmin):
     _grpc_delete_selected.short_description = "Delete selected records"  # type: ignore[attr-defined]
 
     def get_grpc_selected_pks(self, request: HttpRequest, queryset: Any) -> list[Any]:
-        selected = getattr(queryset, "_selected_pks", None) or request.POST.getlist("_selected_action")
+        selected = getattr(queryset, "_selected_pks", None) or request.POST.getlist(
+            "_selected_action"
+        )
         return list(selected or [])
 
     def apply_grpc_bulk_update(
@@ -589,7 +578,7 @@ class GrpcResourceAdmin(ModelAdmin):
         errors = 0
         for pk in selected_pks:
             try:
-                adapter.update(self._resource_class, pk, data)
+                self._adapter_update(adapter, self._resource_class, pk, data)
                 updated += 1
             except GrpcAdminError as exc:
                 logger.warning("gRPC bulk update failed for pk=%s: %s", pk, exc)
@@ -603,7 +592,7 @@ class GrpcResourceAdmin(ModelAdmin):
 
     # ── Adapter plumbing ───────────────────────────────────────────────────
 
-    def get_adapter(self) -> BaseGrpcServiceAdapter | None:
+    def get_adapter(self) -> BaseGrpcServiceAdapter | BaseAsyncGrpcServiceAdapter | None:
         """Return the gRPC adapter for this admin."""
         if self._adapter is not None:
             return self._adapter
@@ -640,12 +629,19 @@ class GrpcResourceAdmin(ModelAdmin):
         else:
             filterable_fields = None
 
-        filter_config_dict: dict[str, Any] = (
-            cast(dict[str, Any], cfg) if is_dict_config else {}
-        )
+        filter_config_dict: dict[str, Any] = cast(dict[str, Any], cfg) if is_dict_config else {}
 
         for key in request.GET:
-            if key in {"p", "o", "all", "_changelist_filters", "e", "q", "cursor", "__grpc_filter_fp"}:
+            if key in {
+                "p",
+                "o",
+                "all",
+                "_changelist_filters",
+                "e",
+                "q",
+                "cursor",
+                "__grpc_filter_fp",
+            }:
                 continue
 
             if filterable_fields is not None:
@@ -656,9 +652,17 @@ class GrpcResourceAdmin(ModelAdmin):
                     config = filter_config_dict.get(base_key, {})
                     field_type = config.get("type", "text") if isinstance(config, dict) else "text"
                     suffix = key[len(base_key) :] if key.startswith(base_key) else ""
-                    if field_type in ("number_range", "date_range") and suffix and suffix not in {"__gte", "__lte", "__gt", "__lt"}:
+                    if (
+                        field_type in ("number_range", "date_range")
+                        and suffix
+                        and suffix not in {"__gte", "__lte", "__gt", "__lt"}
+                    ):
                         continue
-                    if field_type == "multi_choices" and suffix and suffix not in {"", "__exact", "__in"}:
+                    if (
+                        field_type == "multi_choices"
+                        and suffix
+                        and suffix not in {"", "__exact", "__in"}
+                    ):
                         continue
                 else:
                     if key not in filterable_fields:
@@ -690,9 +694,7 @@ class GrpcResourceAdmin(ModelAdmin):
     ) -> PagedResult | dict[str, Any]:
         adapter = self.get_adapter()
         if adapter is None:
-            logger.warning(
-                "No gRPC adapter available for service: %s", self.service_name
-            )
+            logger.warning("No gRPC adapter available for service: %s", self.service_name)
             return PagedResult(items=[])
 
         kwargs: dict[str, Any] = {"filters": filters or {}}
@@ -702,16 +704,84 @@ class GrpcResourceAdmin(ModelAdmin):
             kwargs["page"] = page
             kwargs["page_size"] = page_size
 
-        return adapter.list(self._resource_class, **kwargs)
+        return cast(BaseGrpcServiceAdapter, adapter).list(self._resource_class, **kwargs)
 
     def fetch_one(self, pk: str) -> ModelWrapper | None:
         adapter = self.get_adapter()
         if adapter is None:
             return None
-        instance = adapter.get(self._resource_class, pk=pk)
+        instance = self._adapter_get(adapter, self._resource_class, pk)
         if instance is None:
             return None
         return ModelWrapper(instance, self._fake_model._meta)
+
+    def _adapter_get(
+        self,
+        adapter: BaseGrpcServiceAdapter | BaseAsyncGrpcServiceAdapter,
+        resource_class: type[BaseGrpcResource],
+        pk: str,
+        method_name: str = "get",
+    ) -> BaseGrpcResource | None:
+        """Hook for adapter ``get()``; overridden by async admin."""
+        method = getattr(adapter, method_name)
+        if isinstance(adapter, BaseAsyncGrpcServiceAdapter):
+            return cast(BaseGrpcResource | None, run_async(method(resource_class, pk)))
+        try:
+            return cast(BaseGrpcResource | None, method(resource_class, pk=pk))
+        except TypeError:
+            return cast(BaseGrpcResource | None, method(resource_class, pk))
+
+    def _adapter_batch_get(
+        self,
+        adapter: BaseGrpcServiceAdapter | BaseAsyncGrpcServiceAdapter,
+        resource_class: type[BaseGrpcResource],
+        pks: list[Any],
+    ) -> dict[Any, Any]:
+        """Hook for adapter ``batch_get()``; handles async adapters via ``run_async``."""
+        if isinstance(adapter, BaseAsyncGrpcServiceAdapter):
+            return cast(dict[Any, Any], run_async(adapter.batch_get(resource_class, pks)))
+        return cast(BaseGrpcServiceAdapter, adapter).batch_get(resource_class, pks)
+
+    def _get_fk_adapter(
+        self, service: str
+    ) -> BaseGrpcServiceAdapter | BaseAsyncGrpcServiceAdapter | None:
+        """Look up an FK service adapter from the sync registry, then the async one."""
+        from django_admin_grpc.registry import adapter_registry
+
+        adapter = adapter_registry.get_adapter(service)
+        if adapter is not None:
+            return adapter
+        from django_admin_grpc.async_adapter import async_adapter_registry
+
+        return async_adapter_registry.get_adapter(service)
+
+    def _adapter_create(
+        self,
+        adapter: BaseGrpcServiceAdapter | BaseAsyncGrpcServiceAdapter,
+        resource_class: type[BaseGrpcResource],
+        data: dict[str, Any],
+    ) -> BaseGrpcResource:
+        """Hook for adapter ``create()``; overridden by async admin."""
+        return cast(BaseGrpcServiceAdapter, adapter).create(resource_class, data)
+
+    def _adapter_update(
+        self,
+        adapter: BaseGrpcServiceAdapter | BaseAsyncGrpcServiceAdapter,
+        resource_class: type[BaseGrpcResource],
+        pk: str,
+        data: dict[str, Any],
+    ) -> BaseGrpcResource:
+        """Hook for adapter ``update()``; overridden by async admin."""
+        return cast(BaseGrpcServiceAdapter, adapter).update(resource_class, pk, data)
+
+    def _adapter_delete(
+        self,
+        adapter: BaseGrpcServiceAdapter | BaseAsyncGrpcServiceAdapter,
+        resource_class: type[BaseGrpcResource],
+        pk: str,
+    ) -> bool:
+        """Hook for adapter ``delete()``; overridden by async admin."""
+        return cast(BaseGrpcServiceAdapter, adapter).delete(resource_class, pk)
 
     # ── FK display caching ─────────────────────────────────────────────────
 
@@ -782,9 +852,7 @@ class GrpcResourceAdmin(ModelAdmin):
             if not fc.service or fc.model or not fc.display_field:
                 continue
 
-            from django_admin_grpc.registry import adapter_registry
-
-            adapter = adapter_registry.get_adapter(fc.service)
+            adapter = self._get_fk_adapter(fc.service)
             if adapter is None:
                 logger.warning(
                     "No gRPC adapter registered for service=%s field=%s",
@@ -808,28 +876,24 @@ class GrpcResourceAdmin(ModelAdmin):
             has_custom_batch_get = (
                 hasattr(adapter, "batch_get")
                 and getattr(type(adapter), "batch_get", None)
-                is not BaseGrpcServiceAdapter.batch_get
+                not in (BaseGrpcServiceAdapter.batch_get, BaseAsyncGrpcServiceAdapter.batch_get)
             )
 
             resolved: dict[Any, Any] = {}
             if has_custom_batch_get:
                 try:
-                    resolved = adapter.batch_get(related_resource_class, list(fk_ids))
+                    resolved = self._adapter_batch_get(adapter, related_resource_class, list(fk_ids))
                 except Exception as exc:
-                    logger.warning(
-                        "Failed to batch_get FK values for field %s: %s", fc.name, exc
-                    )
+                    logger.warning("Failed to batch_get FK values for field %s: %s", fc.name, exc)
                     continue
             else:
                 # Backward-compatible fallback: loop the configured get_method.
                 get_method = getattr(fc, "get_method", "get") or "get"
                 for fk_id in fk_ids:
                     try:
-                        method = getattr(adapter, get_method)
-                        try:
-                            related = method(related_resource_class, pk=fk_id)
-                        except TypeError:
-                            related = method(related_resource_class, fk_id)
+                        related = self._adapter_get(
+                            adapter, related_resource_class, str(fk_id), get_method
+                        )
                         resolved[fk_id] = related
                     except Exception as exc:
                         logger.warning(
@@ -844,9 +908,7 @@ class GrpcResourceAdmin(ModelAdmin):
                 if related is None:
                     field_cache[fk_id] = None
                 else:
-                    field_cache[fk_id] = getattr(
-                        related, fc.display_field, str(related)
-                    )
+                    field_cache[fk_id] = getattr(related, fc.display_field, str(related))
             display_cache[fc.name] = field_cache
 
         request_cache[cache_key] = display_cache
@@ -870,10 +932,14 @@ class GrpcResourceAdmin(ModelAdmin):
         return adapter is not None and adapter.supports_delete
 
     def _can_create(self) -> bool:
-        return self.grpc_enable_create and self._has_form_fields() and self._adapter_supports_create()
+        return (
+            self.grpc_enable_create and self._has_form_fields() and self._adapter_supports_create()
+        )
 
     def _can_update(self) -> bool:
-        return self.grpc_enable_update and self._has_form_fields() and self._adapter_supports_update()
+        return (
+            self.grpc_enable_update and self._has_form_fields() and self._adapter_supports_update()
+        )
 
     def _can_delete(self) -> bool:
         return self.grpc_enable_delete and self._adapter_supports_delete()
@@ -881,19 +947,17 @@ class GrpcResourceAdmin(ModelAdmin):
     def has_add_permission(self, request: HttpRequest) -> bool:
         return self.has_grpc_add_permission(request) and self._can_create()
 
-    def has_change_permission(
-        self, request: HttpRequest, obj: Any = None
-    ) -> bool:
-        return self.has_grpc_change_permission(request, obj=obj) and self.has_view_permission(request, obj=obj) and self._can_update()
+    def has_change_permission(self, request: HttpRequest, obj: Any = None) -> bool:
+        return (
+            self.has_grpc_change_permission(request, obj=obj)
+            and self.has_view_permission(request, obj=obj)
+            and self._can_update()
+        )
 
-    def has_delete_permission(
-        self, request: HttpRequest, obj: Any = None
-    ) -> bool:
+    def has_delete_permission(self, request: HttpRequest, obj: Any = None) -> bool:
         return self.has_grpc_delete_permission(request, obj=obj) and self._can_delete()
 
-    def has_view_permission(
-        self, request: HttpRequest, obj: Any = None
-    ) -> bool:
+    def has_view_permission(self, request: HttpRequest, obj: Any = None) -> bool:
         return self.has_grpc_view_permission(request, obj=obj)
 
     def has_grpc_add_permission(self, request: HttpRequest) -> bool:
@@ -932,17 +996,12 @@ class GrpcResourceAdmin(ModelAdmin):
         return data
 
     def get_grpc_form_initial(self, obj: Any) -> dict[str, Any]:
-        return {
-            field_name: getattr(obj, field_name, None)
-            for field_name in self.grpc_form_fields
-        }
+        return {field_name: getattr(obj, field_name, None) for field_name in self.grpc_form_fields}
 
     def get_grpc_create_data(self, cleaned_data: dict[str, Any]) -> dict[str, Any]:
         return cleaned_data
 
-    def get_grpc_update_data(
-        self, obj: Any, cleaned_data: dict[str, Any]
-    ) -> dict[str, Any]:
+    def get_grpc_update_data(self, obj: Any, cleaned_data: dict[str, Any]) -> dict[str, Any]:
         return cleaned_data
 
     # ── Detail rows ────────────────────────────────────────────────────────
@@ -1040,9 +1099,7 @@ class GrpcResourceAdmin(ModelAdmin):
             # to the row resource class for backward compatibility.
             related_resource_class = getattr(config, "resource_class", None) or self._resource_class
             try:
-                from django_admin_grpc.registry import adapter_registry
-
-                adapter = adapter_registry.get_adapter(service)
+                adapter = self._get_fk_adapter(service)
                 if adapter is None:
                     logger.warning(
                         "resolve_fk_value: No adapter for service=%s field=%s",
@@ -1050,10 +1107,7 @@ class GrpcResourceAdmin(ModelAdmin):
                         field_name,
                     )
                     return None
-                try:
-                    result = getattr(adapter, get_method)(related_resource_class, pk=fk_id)
-                except TypeError:
-                    result = getattr(adapter, get_method)(related_resource_class, fk_id)
+                result = self._adapter_get(adapter, related_resource_class, str(fk_id), get_method)
                 if result is None:
                     return None
                 return str(getattr(result, config.display_field, str(result)))
@@ -1087,14 +1141,8 @@ class GrpcResourceAdmin(ModelAdmin):
         extra_context: dict[str, Any] | None = None,
     ) -> TemplateResponse:
         extra_context = extra_context or {}
-        action = (
-            "change"
-            if self._can_update() or self._can_delete()
-            else "view"
-        )
-        extra_context["title"] = (
-            f"Select {self._fake_model._meta.verbose_name} to {action}"
-        )
+        action = "change" if self._can_update() or self._can_delete() else "view"
+        extra_context["title"] = f"Select {self._fake_model._meta.verbose_name} to {action}"
         response = super().changelist_view(request, extra_context)
         if self.grpc_cursor_pagination:
             if not hasattr(response, "context_data"):
@@ -1127,7 +1175,8 @@ class GrpcResourceAdmin(ModelAdmin):
                             )
                         )
                     cleaned_data = self.clean_grpc_data(form.cleaned_data)
-                    adapter.create(
+                    self._adapter_create(
+                        adapter,
                         self._resource_class,
                         self.get_grpc_create_data(cleaned_data),
                     )
@@ -1181,8 +1230,7 @@ class GrpcResourceAdmin(ModelAdmin):
         }
         return TemplateResponse(
             request,
-            getattr(self, "grpc_add_form_template", None)
-            or self._get_change_form_template(),
+            getattr(self, "grpc_add_form_template", None) or self._get_change_form_template(),
             context,
         )
 
@@ -1221,7 +1269,8 @@ class GrpcResourceAdmin(ModelAdmin):
                         messages.error(request, "gRPC adapter not available.")
                         return HttpResponseRedirect(request.path)
                     cleaned_data = self.clean_grpc_data(form.cleaned_data)
-                    adapter.update(
+                    self._adapter_update(
+                        adapter,
                         self._resource_class,
                         str(obj.pk),
                         self.get_grpc_update_data(obj, cleaned_data),
@@ -1305,7 +1354,7 @@ class GrpcResourceAdmin(ModelAdmin):
                             f"admin:{self._fake_model._meta.app_label}_{self._fake_model._meta.model_name}_changelist"
                         )
                     )
-                deleted = adapter.delete(self._resource_class, str(obj.pk))
+                deleted = self._adapter_delete(adapter, self._resource_class, str(obj.pk))
                 if deleted:
                     messages.success(
                         request,
@@ -1342,7 +1391,199 @@ class GrpcResourceAdmin(ModelAdmin):
         }
         return TemplateResponse(
             request,
-            getattr(self, "grpc_delete_template", None)
-            or self._get_delete_confirm_template(),
+            getattr(self, "grpc_delete_template", None) or self._get_delete_confirm_template(),
             context,
         )
+
+
+def run_async(coro: Any) -> Any:
+    """
+    Run a coroutine from synchronous code.
+
+    All coroutines are dispatched to a single, persistent background event loop.
+    This keeps ``grpc.aio.Channel`` instances bound to one loop even when the
+    synchronous Django admin makes multiple adapter calls, and avoids creating a
+    fresh thread/loop for every call.
+
+    Args:
+        coro: A coroutine object (not a coroutine function).
+
+    Returns:
+        The awaitable's result.
+    """
+    if not asyncio.iscoroutine(coro):
+        raise TypeError("run_async expects a coroutine object")
+    return _async_bridge.run(coro)
+
+
+class _AsyncBridge:
+    """Persistent background event loop for running coroutines from sync code."""
+
+    def __init__(self) -> None:
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._thread: threading.Thread | None = None
+        self._lock = threading.Lock()
+
+    def _ensure_started(self) -> asyncio.AbstractEventLoop:
+        with self._lock:
+            if (
+                self._thread is not None
+                and self._thread.is_alive()
+                and self._loop is not None
+                and not self._loop.is_closed()
+            ):
+                return self._loop
+
+            self._loop = asyncio.new_event_loop()
+            self._thread = threading.Thread(
+                target=self._loop.run_forever,
+                daemon=True,
+                name="django-admin-grpc-async-bridge",
+            )
+            self._thread.start()
+            return self._loop
+
+    def run(self, coro: Any) -> Any:
+        loop = self._ensure_started()
+        future = asyncio.run_coroutine_threadsafe(coro, loop)
+        try:
+            return future.result()
+        except Exception:
+            # Unwrap cancellation exceptions raised by the bridge so callers see
+            # the underlying error raised inside the coroutine.
+            future.cancel()
+            raise
+
+    def close(self) -> None:
+        with self._lock:
+            thread = self._thread
+            loop = self._loop
+            self._thread = None
+            self._loop = None
+
+        if loop is not None and not loop.is_closed():
+            try:
+                loop.call_soon_threadsafe(loop.stop)
+            except Exception:
+                logger.exception("Error stopping async bridge loop")
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=5.0)
+        if loop is not None and not loop.is_closed():
+            try:
+                loop.close()
+            except Exception:
+                logger.exception("Error closing async bridge loop")
+
+
+_async_bridge = _AsyncBridge()
+atexit.register(_async_bridge.close)
+
+
+class AsyncGrpcResourceAdmin(GrpcResourceAdmin):
+    """
+    ``GrpcResourceAdmin`` variant that supports async adapters.
+
+    When the resolved adapter is a ``BaseAsyncGrpcServiceAdapter``, list/get/
+    create/update/delete calls are automatically run via ``run_async`` so the admin
+    views remain ordinary synchronous Django views.  For ASGI deployments, the
+    ``async_changelist_view`` method provides an async-native entry point.
+    """
+
+    def get_adapter(self) -> BaseGrpcServiceAdapter | BaseAsyncGrpcServiceAdapter | None:
+        """Return the gRPC adapter, consulting the async registry as a fallback."""
+        adapter = super().get_adapter()
+        if adapter is not None:
+            return adapter
+        if self.service_name and self._adapter is None:
+            from django_admin_grpc.async_adapter import async_adapter_registry
+
+            self._adapter = async_adapter_registry.get_adapter(self.service_name)
+        return self._adapter
+
+    def _is_async_adapter(self) -> bool:
+        adapter = self.get_adapter()
+        return isinstance(adapter, BaseAsyncGrpcServiceAdapter)
+
+    def _adapter_get(
+        self,
+        adapter: BaseGrpcServiceAdapter | BaseAsyncGrpcServiceAdapter,
+        resource_class: type[BaseGrpcResource],
+        pk: str,
+        method_name: str = "get",
+    ) -> BaseGrpcResource | None:
+        if isinstance(adapter, BaseAsyncGrpcServiceAdapter):
+            method = getattr(adapter, method_name)
+            return cast(BaseGrpcResource | None, run_async(method(resource_class, pk)))
+        return super()._adapter_get(adapter, resource_class, pk, method_name)
+
+    def _adapter_create(
+        self,
+        adapter: BaseGrpcServiceAdapter | BaseAsyncGrpcServiceAdapter,
+        resource_class: type[BaseGrpcResource],
+        data: dict[str, Any],
+    ) -> BaseGrpcResource:
+        if isinstance(adapter, BaseAsyncGrpcServiceAdapter):
+            return cast(BaseGrpcResource, run_async(adapter.create(resource_class, data)))
+        return super()._adapter_create(adapter, resource_class, data)
+
+    def _adapter_update(
+        self,
+        adapter: BaseGrpcServiceAdapter | BaseAsyncGrpcServiceAdapter,
+        resource_class: type[BaseGrpcResource],
+        pk: str,
+        data: dict[str, Any],
+    ) -> BaseGrpcResource:
+        if isinstance(adapter, BaseAsyncGrpcServiceAdapter):
+            return cast(BaseGrpcResource, run_async(adapter.update(resource_class, pk, data)))
+        return super()._adapter_update(adapter, resource_class, pk, data)
+
+    def _adapter_delete(
+        self,
+        adapter: BaseGrpcServiceAdapter | BaseAsyncGrpcServiceAdapter,
+        resource_class: type[BaseGrpcResource],
+        pk: str,
+    ) -> bool:
+        if isinstance(adapter, BaseAsyncGrpcServiceAdapter):
+            return cast(bool, run_async(adapter.delete(resource_class, pk)))
+        return super()._adapter_delete(adapter, resource_class, pk)
+
+    def fetch_list(
+        self,
+        page: int = 1,
+        page_size: int = 25,
+        filters: dict[str, Any] | None = None,
+    ) -> PagedResult | dict[str, Any]:
+        adapter = self.get_adapter()
+        if adapter is None:
+            logger.warning("No gRPC adapter available for service: %s", self.service_name)
+            return PagedResult(items=[])
+
+        kwargs: dict[str, Any] = {"filters": filters or {}}
+        if self.grpc_cursor_pagination:
+            kwargs["page_size"] = page_size
+        else:
+            kwargs["page"] = page
+            kwargs["page_size"] = page_size
+
+        if isinstance(adapter, BaseAsyncGrpcServiceAdapter):
+            return cast(
+                PagedResult | dict[str, Any],
+                run_async(adapter.list(resource_class=self._resource_class, **kwargs)),
+            )
+        return adapter.list(self._resource_class, **kwargs)
+
+    async def async_changelist_view(
+        self,
+        request: HttpRequest,
+        extra_context: dict[str, Any] | None = None,
+    ) -> Any:
+        """
+        Async-native changelist view for ASGI deployments.
+
+        This delegates to the synchronous ``changelist_view`` (which in turn
+        uses ``fetch_list``).  ``fetch_list`` detects async adapters and runs
+        the adapter's ``list()`` coroutine through ``run_async`` automatically.
+        """
+        from asgiref.sync import sync_to_async
+
+        return await sync_to_async(self.changelist_view)(request, extra_context=extra_context)
