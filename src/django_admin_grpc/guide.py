@@ -162,7 +162,7 @@ Methods:
 | `ChoicesFieldConfig` | choices | `choices=[(value, label), ...]` |
 | `DateTimeFieldConfig` | datetime | — |
 | `DateFieldConfig` | date | — |
-| `FKFieldConfig` | fk | `model`, `to_field`, `display_field`, `service`, `get_method`, `choices`, `choices_loader` |
+| `FKFieldConfig` | fk | `model`, `to_field`, `display_field`, `service`, `get_method`, `resource_class`, `choices`, `choices_loader` |
 
 All field configs support: `name`, `label`, `required`, `help_text`, `initial`, `source`, `readonly`, `editable`, `detail_only`, `list_only`
 

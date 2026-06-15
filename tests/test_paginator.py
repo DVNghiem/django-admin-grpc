@@ -1,7 +1,7 @@
 """
 Tests for django_admin_grpc.paginator module.
 """
-from django_admin_grpc.paginator import GrpcPaginator, PagedResult
+from django_admin_grpc.paginator import GrpcPaginator, PagedResult, compute_filter_fingerprint
 
 
 class TestPagedResult:
@@ -50,3 +50,20 @@ class TestGrpcPaginator:
         assert paginator.count == 0
         page = paginator.page(1)
         assert len(page.object_list) == 0
+
+
+class TestComputeFilterFingerprint:
+    def test_deterministic_by_key_order(self):
+        fp1 = compute_filter_fingerprint({"a": 1, "b": 2})
+        fp2 = compute_filter_fingerprint({"b": 2, "a": 1})
+        assert fp1 == fp2
+
+    def test_value_changes_differ(self):
+        fp1 = compute_filter_fingerprint({"a": 1})
+        fp2 = compute_filter_fingerprint({"a": 2})
+        assert fp1 != fp2
+
+    def test_length(self):
+        fp = compute_filter_fingerprint({"a": 1, "b": 2})
+        assert len(fp) == 16
+

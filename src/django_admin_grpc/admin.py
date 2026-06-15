@@ -8,6 +8,7 @@ metadata and ``BaseGrpcServiceAdapter`` for transport.
 from __future__ import annotations
 
 import functools
+import hashlib
 import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
@@ -22,11 +23,12 @@ from django.http import HttpRequest, HttpResponseRedirect
 from django.template.response import TemplateResponse
 from django.urls import reverse
 
+from django_admin_grpc.adapters import BaseGrpcServiceAdapter
+from django_admin_grpc.exceptions import GrpcAdminError, get_grpc_error_message
 from django_admin_grpc.models import GrpcFakeQuerySet, ModelWrapper
-from django_admin_grpc.paginator import GrpcPaginator, PagedResult
+from django_admin_grpc.paginator import GrpcPaginator, PagedResult, compute_filter_fingerprint
 
 if TYPE_CHECKING:
-    from django_admin_grpc.adapters import BaseGrpcServiceAdapter
     from django_admin_grpc.resources import BaseGrpcResource
 
 logger = logging.getLogger(__name__)
@@ -332,14 +334,21 @@ class GrpcChangeList(ChangeList):
         page_size = self.list_per_page
         filters = self._grpc_model_admin.get_grpc_filters(request)
 
-        if getattr(self._grpc_model_admin, "grpc_cursor_pagination", False):
-            cursor = request.GET.get("cursor")
-            if cursor:
-                filters["cursor"] = cursor
-
         search_query = request.GET.get("q", "")
         if search_query:
             filters["search"] = search_query
+
+        is_cursor = getattr(self._grpc_model_admin, "grpc_cursor_pagination", False)
+        filter_fp = ""
+        active_filters = bool(filters)
+        if is_cursor:
+            filter_fp = compute_filter_fingerprint(filters)
+            incoming_fp = request.GET.get("__grpc_filter_fp")
+            cursor = request.GET.get("cursor")
+            if cursor and active_filters and incoming_fp != filter_fp:
+                cursor = None
+            if cursor:
+                filters["cursor"] = cursor
 
         try:
             result = self._grpc_model_admin.fetch_list(
@@ -354,8 +363,10 @@ class GrpcChangeList(ChangeList):
             )
 
             fake_model = self._grpc_model_admin._fake_model
+            fk_cache = self._grpc_model_admin._preload_fk_displays(request, items)
             self.result_list = [
-                ModelWrapper(item, fake_model._meta) for item in items
+                ModelWrapper(item, fake_model._meta, fk_display_cache=fk_cache)
+                for item in items
             ]
             self.result_count = total
             self.full_result_count = total
@@ -366,12 +377,16 @@ class GrpcChangeList(ChangeList):
                 self.result_list, page_size, self.result_count
             )
 
-            if getattr(self._grpc_model_admin, "grpc_cursor_pagination", False):
+            if is_cursor:
                 self.grpc_next_cursor = next_cursor
                 if next_cursor:
                     params = request.GET.copy()
                     params["cursor"] = next_cursor
                     params.pop("p", None)
+                    if active_filters:
+                        params["__grpc_filter_fp"] = filter_fp
+                    else:
+                        params.pop("__grpc_filter_fp", None)
                     self.cursor_next_url = "?" + urlencode(params)
                 else:
                     self.cursor_next_url = None  # type: ignore[assignment]
@@ -382,6 +397,18 @@ class GrpcChangeList(ChangeList):
                     or "django_admin_grpc/cursor_pagination.html"
                 )
 
+        except GrpcAdminError as exc:
+            logger.exception("Error fetching gRPC data: %s", exc)
+            self.result_list = []
+            self.result_count = 0
+            self.full_result_count = 0
+            self.can_show_all = False
+            self.multi_page = False
+            self.paginator = GrpcPaginator([], page_size, 0)
+            if is_cursor:
+                self.cursor_next_url = None  # type: ignore[assignment]
+            level, message = get_grpc_error_message(exc)
+            messages.add_message(request, level, message)
         except Exception as e:
             logger.exception("Error fetching gRPC data: %s", e)
             self.result_list = []
@@ -390,7 +417,7 @@ class GrpcChangeList(ChangeList):
             self.can_show_all = False
             self.multi_page = False
             self.paginator = GrpcPaginator([], page_size, 0)
-            if getattr(self._grpc_model_admin, "grpc_cursor_pagination", False):
+            if is_cursor:
                 self.cursor_next_url = None  # type: ignore[assignment]
             messages.info(request, "No data found or error fetching data.")
 
@@ -522,6 +549,11 @@ class GrpcResourceAdmin(ModelAdmin):
             try:
                 adapter.delete(self._resource_class, pk=pk)
                 deleted += 1
+            except GrpcAdminError as exc:
+                logger.warning("gRPC delete failed for pk=%s: %s", pk, exc)
+                errors += 1
+                level, message = get_grpc_error_message(exc)
+                messages.add_message(request, level, message)
             except Exception as exc:
                 logger.warning("gRPC delete failed for pk=%s: %s", pk, exc)
                 errors += 1
@@ -559,6 +591,11 @@ class GrpcResourceAdmin(ModelAdmin):
             try:
                 adapter.update(self._resource_class, pk, data)
                 updated += 1
+            except GrpcAdminError as exc:
+                logger.warning("gRPC bulk update failed for pk=%s: %s", pk, exc)
+                errors += 1
+                level, message = get_grpc_error_message(exc)
+                messages.add_message(request, level, message)
             except Exception as exc:
                 logger.warning("gRPC bulk update failed for pk=%s: %s", pk, exc)
                 errors += 1
@@ -608,7 +645,7 @@ class GrpcResourceAdmin(ModelAdmin):
         )
 
         for key in request.GET:
-            if key in {"p", "o", "all", "_changelist_filters", "e", "q", "cursor"}:
+            if key in {"p", "o", "all", "_changelist_filters", "e", "q", "cursor", "__grpc_filter_fp"}:
                 continue
 
             if filterable_fields is not None:
@@ -675,6 +712,145 @@ class GrpcResourceAdmin(ModelAdmin):
         if instance is None:
             return None
         return ModelWrapper(instance, self._fake_model._meta)
+
+    # ── FK display caching ─────────────────────────────────────────────────
+
+    def _compute_fk_page_key(self, items: list[Any]) -> str:
+        """Return a stable, order-independent key for *items*.
+
+        The key includes each item's primary key plus the values of any
+        service-backed FK fields. This prevents stale display maps when the same
+        row PKs are rendered with different FK values in the same request.
+        """
+        from django_admin_grpc.resources import FKFieldConfig
+
+        fk_fields = [
+            fc.name
+            for fc in self._resource_class.get_field_configs()
+            if isinstance(fc, FKFieldConfig) and fc.service and not fc.model
+        ]
+
+        item_keys: list[str] = []
+        for item in items:
+            pk = getattr(item, "pk", None)
+            if pk is None:
+                pk = getattr(item, "id", None)
+            if pk is None:
+                pk = repr(item)
+
+            parts = [str(pk)]
+            for field_name in fk_fields:
+                value = getattr(item, field_name, None)
+                parts.append(f"{field_name}={value}")
+            item_keys.append("|".join(parts))
+
+        fingerprint = ",".join(sorted(item_keys))
+        return hashlib.sha256(fingerprint.encode()).hexdigest()[:16]
+
+    def _preload_fk_displays(
+        self,
+        request: HttpRequest,
+        items: list[Any],
+    ) -> dict[str, dict[Any, Any]]:
+        """
+        Collect distinct service-backed FK values across *items* and resolve them
+        with a single ``batch_get`` call per field.
+
+        The resulting mapping is cached on *request* for the duration of the
+        request so repeated list renders do not trigger additional lookups.
+        """
+        from django_admin_grpc.resources import FKFieldConfig
+
+        if not items:
+            return {}
+
+        request_cache: dict[str, Any] = getattr(request, "_grpc_fk_cache", None) or {}
+        if not request_cache:
+            request._grpc_fk_cache = request_cache  # type: ignore[attr-defined]
+
+        page_key = self._compute_fk_page_key(items)
+        cache_key = f"{self._resource_class.__name__}_fk_displays_{page_key}"
+        if cache_key in request_cache:
+            return cast(dict[str, dict[Any, Any]], request_cache[cache_key])
+
+        display_cache: dict[str, dict[Any, Any]] = {}
+
+        for fc in self._resource_class.get_field_configs():
+            if not isinstance(fc, FKFieldConfig):
+                continue
+            # Model-backed FKs are resolved by Django ORM; preload only service FKs.
+            if not fc.service or fc.model or not fc.display_field:
+                continue
+
+            from django_admin_grpc.registry import adapter_registry
+
+            adapter = adapter_registry.get_adapter(fc.service)
+            if adapter is None:
+                logger.warning(
+                    "No gRPC adapter registered for service=%s field=%s",
+                    fc.service,
+                    fc.name,
+                )
+                continue
+
+            fk_ids: set[Any] = set()
+            for item in items:
+                raw_value = getattr(item, fc.name, None)
+                if raw_value is not None and raw_value != "":
+                    fk_ids.add(raw_value)
+            if not fk_ids:
+                continue
+
+            # Use the FK target resource class when configured, otherwise fall back
+            # to the row resource class for backward compatibility.
+            related_resource_class = fc.resource_class or self._resource_class
+
+            has_custom_batch_get = (
+                hasattr(adapter, "batch_get")
+                and getattr(type(adapter), "batch_get", None)
+                is not BaseGrpcServiceAdapter.batch_get
+            )
+
+            resolved: dict[Any, Any] = {}
+            if has_custom_batch_get:
+                try:
+                    resolved = adapter.batch_get(related_resource_class, list(fk_ids))
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to batch_get FK values for field %s: %s", fc.name, exc
+                    )
+                    continue
+            else:
+                # Backward-compatible fallback: loop the configured get_method.
+                get_method = getattr(fc, "get_method", "get") or "get"
+                for fk_id in fk_ids:
+                    try:
+                        method = getattr(adapter, get_method)
+                        try:
+                            related = method(related_resource_class, pk=fk_id)
+                        except TypeError:
+                            related = method(related_resource_class, fk_id)
+                        resolved[fk_id] = related
+                    except Exception as exc:
+                        logger.warning(
+                            "Failed to resolve FK value for field %s pk=%s: %s",
+                            fc.name,
+                            fk_id,
+                            exc,
+                        )
+
+            field_cache: dict[Any, Any] = {}
+            for fk_id, related in resolved.items():
+                if related is None:
+                    field_cache[fk_id] = None
+                else:
+                    field_cache[fk_id] = getattr(
+                        related, fc.display_field, str(related)
+                    )
+            display_cache[fc.name] = field_cache
+
+        request_cache[cache_key] = display_cache
+        return display_cache
 
     # ── Permission helpers ─────────────────────────────────────────────────
 
@@ -860,6 +1036,9 @@ class GrpcResourceAdmin(ModelAdmin):
         if getattr(config, "service", None):
             service = cast(str, config.service)
             get_method = getattr(config, "get_method", "get")
+            # Use the FK target resource class when configured, otherwise fall back
+            # to the row resource class for backward compatibility.
+            related_resource_class = getattr(config, "resource_class", None) or self._resource_class
             try:
                 from django_admin_grpc.registry import adapter_registry
 
@@ -872,9 +1051,9 @@ class GrpcResourceAdmin(ModelAdmin):
                     )
                     return None
                 try:
-                    result = getattr(adapter, get_method)(self._resource_class, pk=fk_id)
+                    result = getattr(adapter, get_method)(related_resource_class, pk=fk_id)
                 except TypeError:
-                    result = getattr(adapter, get_method)(self._resource_class, fk_id)
+                    result = getattr(adapter, get_method)(related_resource_class, fk_id)
                 if result is None:
                     return None
                 return str(getattr(result, config.display_field, str(result)))
@@ -961,6 +1140,10 @@ class GrpcResourceAdmin(ModelAdmin):
                             f"admin:{self._fake_model._meta.app_label}_{self._fake_model._meta.model_name}_changelist"
                         )
                     )
+                except GrpcAdminError as exc:
+                    logger.exception("Error creating via gRPC: %s", exc)
+                    level, message = get_grpc_error_message(exc)
+                    messages.add_message(request, level, message)
                 except Exception as exc:
                     logger.exception("Error creating via gRPC: %s", exc)
                     messages.error(request, f"Error creating: {exc}")
@@ -1048,6 +1231,10 @@ class GrpcResourceAdmin(ModelAdmin):
                         f"Successfully updated {self._fake_model._meta.verbose_name}.",
                     )
                     return HttpResponseRedirect(request.path)
+                except GrpcAdminError as exc:
+                    logger.exception("Error updating via gRPC: %s", exc)
+                    level, message = get_grpc_error_message(exc)
+                    messages.add_message(request, level, message)
                 except Exception as exc:
                     logger.exception("Error updating via gRPC: %s", exc)
                     messages.error(request, f"Error updating: {exc}")
@@ -1129,6 +1316,10 @@ class GrpcResourceAdmin(ModelAdmin):
                         request,
                         f"Delete returned False for {self._fake_model._meta.verbose_name} '{obj}'.",
                     )
+            except GrpcAdminError as exc:
+                logger.exception("Error deleting via gRPC: %s", exc)
+                level, message = get_grpc_error_message(exc)
+                messages.add_message(request, level, message)
             except Exception as exc:
                 logger.exception("Error deleting via gRPC: %s", exc)
                 messages.error(request, f"Error deleting: {exc}")

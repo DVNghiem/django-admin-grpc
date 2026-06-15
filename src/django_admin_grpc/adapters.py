@@ -72,6 +72,30 @@ class BaseGrpcServiceAdapter(ABC):
         """
         ...
 
+    def batch_get(
+        self,
+        resource_class: type[BaseGrpcResource],
+        pks: list[Any],  # type: ignore[valid-type]
+    ) -> dict[Any, BaseGrpcResource | None]:
+        """
+        Fetch multiple entities by primary key in a batch.
+
+        The default implementation loops ``get()`` one PK at a time. Concrete
+        adapters should override this when the backing service supports a true
+        batch lookup.
+
+        Args:
+            resource_class: The resource class to instantiate.
+            pks: Primary key values to fetch.
+
+        Returns:
+            A mapping of PK to resource instance (or ``None`` if not found).
+        """
+        result: dict[Any, BaseGrpcResource | None] = {}
+        for pk in pks:  # type: ignore[attr-defined]
+            result[pk] = self.get(resource_class, str(pk))
+        return result
+
     def create(
         self,
         resource_class: type[BaseGrpcResource],
@@ -116,8 +140,34 @@ class BaseGrpcServiceAdapter(ABC):
         return type(self).delete is not BaseGrpcServiceAdapter.delete
 
     def close(self) -> None:
-        """Release any held connections. Override if needed."""
-        return None
+        """Release any held connections."""
+        channel = getattr(self, "_channel", None)
+        if channel is not None:
+            try:
+                channel.close()
+            except Exception:
+                logger.exception("Error closing gRPC channel for %s", self.service_name)
+
+    def _create_channel(self, target: str, **kwargs: Any) -> grpc.Channel:
+        """
+        Create a raw gRPC channel for *target* and wrap it with the trace interceptor.
+
+        If wrapping raises, the raw channel is closed to avoid leaking the
+        underlying connection.
+
+        Args:
+            target: gRPC target string (e.g. ``"service:50051"``).
+            **kwargs: Extra arguments forwarded to ``grpc.insecure_channel``.
+
+        Returns:
+            A wrapped gRPC channel.
+        """
+        raw_channel = grpc.insecure_channel(target, **kwargs)
+        try:
+            return self._wrap_channel(raw_channel)
+        except Exception:
+            raw_channel.close()
+            raise
 
     def _wrap_channel(self, channel: grpc.Channel) -> grpc.Channel:
         """

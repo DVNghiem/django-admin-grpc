@@ -1,6 +1,7 @@
 """
 Tests for django_admin_grpc.admin module.
 """
+from typing import Any
 from unittest.mock import Mock, patch
 
 import pytest
@@ -342,6 +343,17 @@ class TestGrpcResourceAdminGetGrpcFilters:
         request = RequestFactory().get("/?name=Widget&active=1&p=1")
         filters = admin_instance.get_grpc_filters(request)
         assert filters == {"name": "Widget", "active": "1"}
+
+    def test_get_grpc_filters_allows_filter_fp_as_user_filter(self):
+        class FilterFpAdmin(GrpcResourceAdmin):
+            resource_class = ProductResource
+            adapter_class = MockAdapter
+            grpc_filter_config = ["filter_fp"]
+
+        admin = FilterFpAdmin(admin_site=AdminSite())
+        request = RequestFactory().get("/?filter_fp=user-value&__grpc_filter_fp=internal")
+        filters = admin.get_grpc_filters(request)
+        assert filters == {"filter_fp": "user-value"}
 
 
 class TestGrpcResourceAdminBuildFormClass:
@@ -1210,3 +1222,605 @@ class TestGrpcAction:
         assert updated == 2
         assert errors == 0
         assert adapter.updated == ["5", "6"]
+
+
+class TestFkBatchGetPreloading:
+    def test_batch_get_called_once_for_many_rows(self, reset_registry):
+        class OwnerResource(BaseGrpcResource):
+            class Meta:
+                app_label = "shop"
+                model_name = "owner"
+
+            fields = [
+                IntegerFieldConfig(name="id"),
+                CharFieldConfig(name="name"),
+            ]
+
+        class ItemResource(BaseGrpcResource):
+            class Meta:
+                app_label = "shop"
+                model_name = "item"
+
+            fields = [
+                IntegerFieldConfig(name="id"),
+                CharFieldConfig(name="title"),
+                FKFieldConfig(name="owner_id", service="owners", display_field="name"),
+            ]
+
+        class OwnerAdapter(BaseGrpcServiceAdapter):
+            service_name = "owners"
+
+            def __init__(self):
+                self.batch_get_calls = 0
+                self.batch_get_ids: list[Any] = []
+
+            def list(self, resource_class, page=1, page_size=25, filters=None):
+                return PagedResult(items=[], total=0)
+
+            def get(self, resource_class, pk):
+                return None
+
+            def batch_get(self, resource_class, pks):
+                self.batch_get_calls += 1
+                self.batch_get_ids.extend(pks)
+                return {pk: OwnerResource(id=pk, name=f"Owner-{pk}") for pk in pks}
+
+        class ItemAdapter(BaseGrpcServiceAdapter):
+            service_name = "items"
+
+            def __init__(self):
+                self._items = [
+                    ItemResource(id=1, title="A", owner_id=10),
+                    ItemResource(id=2, title="B", owner_id=20),
+                    ItemResource(id=3, title="C", owner_id=10),
+                    ItemResource(id=4, title="D", owner_id=30),
+                ]
+
+            def list(self, resource_class, page=1, page_size=25, filters=None):
+                return PagedResult(items=self._items, total=len(self._items))
+
+            def get(self, resource_class, pk):
+                return None
+
+        owner_adapter = OwnerAdapter()
+        item_adapter = ItemAdapter()
+        reset_registry.register("items", item_adapter)
+        reset_registry.register("owners", owner_adapter)
+
+        class ItemAdmin(GrpcResourceAdmin):
+            resource_class = ItemResource
+            service_name = "items"
+
+        admin = ItemAdmin(admin_site=AdminSite())
+        request = RequestFactory().get("/")
+        cl = GrpcChangeList(
+            request=request,
+            model=admin.model,
+            list_display=["title", "owner_id"],
+            list_display_links=["title"],
+            list_filter=[],
+            date_hierarchy=None,
+            search_fields=[],
+            list_select_related=False,
+            list_per_page=25,
+            list_max_show_all=200,
+            list_editable=[],
+            model_admin=admin,
+            sortable_by=["title"],
+            search_help_text="",
+        )
+        cl.get_results(request)
+
+        assert owner_adapter.batch_get_calls == 1
+        assert sorted(owner_adapter.batch_get_ids) == [10, 20, 30]
+
+        # Cached display value is exposed through the wrapped result
+        assert cl.result_list[0].owner_id == "Owner-10"
+        assert cl.result_list[1].owner_id == "Owner-20"
+
+    def test_fk_preload_cache_is_page_scoped(self, reset_registry):
+        """Different rows in the same request must not reuse stale FK maps."""
+
+        class OwnerResource(BaseGrpcResource):
+            class Meta:
+                app_label = "shop"
+                model_name = "owner"
+
+            fields = [
+                IntegerFieldConfig(name="id"),
+                CharFieldConfig(name="name"),
+            ]
+
+        class ItemResource(BaseGrpcResource):
+            class Meta:
+                app_label = "shop"
+                model_name = "item"
+
+            fields = [
+                IntegerFieldConfig(name="id"),
+                CharFieldConfig(name="title"),
+                FKFieldConfig(name="owner_id", service="owners", display_field="name"),
+            ]
+
+        class OwnerAdapter(BaseGrpcServiceAdapter):
+            service_name = "owners"
+
+            def __init__(self):
+                self.batch_get_calls = 0
+                self.batch_get_ids: list[Any] = []
+
+            def list(self, resource_class, page=1, page_size=25, filters=None):
+                return PagedResult(items=[], total=0)
+
+            def get(self, resource_class, pk):
+                return None
+
+            def batch_get(self, resource_class, pks):
+                self.batch_get_calls += 1
+                self.batch_get_ids.extend(pks)
+                return {pk: OwnerResource(id=pk, name=f"Owner-{pk}") for pk in pks}
+
+        class ItemAdmin(GrpcResourceAdmin):
+            resource_class = ItemResource
+            service_name = "items"
+
+        owner_adapter = OwnerAdapter()
+        reset_registry.register("owners", owner_adapter)
+
+        admin = ItemAdmin(admin_site=AdminSite())
+        request = RequestFactory().get("/")
+
+        page_one = [
+            ItemResource(id=1, title="A", owner_id=10),
+            ItemResource(id=2, title="B", owner_id=20),
+        ]
+        page_two = [
+            ItemResource(id=3, title="C", owner_id=30),
+            ItemResource(id=4, title="D", owner_id=40),
+        ]
+
+        cache_one = admin._preload_fk_displays(request, page_one)
+        cache_two = admin._preload_fk_displays(request, page_two)
+
+        assert owner_adapter.batch_get_calls == 2
+        assert sorted(owner_adapter.batch_get_ids) == [10, 20, 30, 40]
+        assert cache_one["owner_id"] == {10: "Owner-10", 20: "Owner-20"}
+        assert cache_two["owner_id"] == {30: "Owner-30", 40: "Owner-40"}
+
+    def test_fk_preload_cache_reused_for_same_page(self, reset_registry):
+        """The same page of rows should resolve FKs once and reuse the cache."""
+
+        class OwnerResource(BaseGrpcResource):
+            class Meta:
+                app_label = "shop"
+                model_name = "owner"
+
+            fields = [
+                IntegerFieldConfig(name="id"),
+                CharFieldConfig(name="name"),
+            ]
+
+        class ItemResource(BaseGrpcResource):
+            class Meta:
+                app_label = "shop"
+                model_name = "item"
+
+            fields = [
+                IntegerFieldConfig(name="id"),
+                CharFieldConfig(name="title"),
+                FKFieldConfig(name="owner_id", service="owners", display_field="name"),
+            ]
+
+        class OwnerAdapter(BaseGrpcServiceAdapter):
+            service_name = "owners"
+
+            def __init__(self):
+                self.batch_get_calls = 0
+
+            def list(self, resource_class, page=1, page_size=25, filters=None):
+                return PagedResult(items=[], total=0)
+
+            def get(self, resource_class, pk):
+                return None
+
+            def batch_get(self, resource_class, pks):
+                self.batch_get_calls += 1
+                return {pk: OwnerResource(id=pk, name=f"Owner-{pk}") for pk in pks}
+
+        class ItemAdmin(GrpcResourceAdmin):
+            resource_class = ItemResource
+            service_name = "items"
+
+        owner_adapter = OwnerAdapter()
+        reset_registry.register("owners", owner_adapter)
+
+        admin = ItemAdmin(admin_site=AdminSite())
+        request = RequestFactory().get("/")
+
+        page_items = [
+            ItemResource(id=1, title="A", owner_id=10),
+            ItemResource(id=2, title="B", owner_id=20),
+        ]
+
+        cache_one = admin._preload_fk_displays(request, page_items)
+        cache_two = admin._preload_fk_displays(request, page_items)
+
+        assert owner_adapter.batch_get_calls == 1
+        assert cache_one is cache_two
+        assert cache_one["owner_id"] == {10: "Owner-10", 20: "Owner-20"}
+
+    def test_fk_preload_cache_differs_for_same_pk_different_fk_value(self, reset_registry):
+        """Same row PKs with different FK values must not reuse stale FK maps."""
+
+        class OwnerResource(BaseGrpcResource):
+            class Meta:
+                app_label = "shop"
+                model_name = "owner"
+
+            fields = [
+                IntegerFieldConfig(name="id"),
+                CharFieldConfig(name="name"),
+            ]
+
+        class ItemResource(BaseGrpcResource):
+            class Meta:
+                app_label = "shop"
+                model_name = "item"
+
+            fields = [
+                IntegerFieldConfig(name="id"),
+                CharFieldConfig(name="title"),
+                FKFieldConfig(name="owner_id", service="owners", display_field="name"),
+            ]
+
+        class OwnerAdapter(BaseGrpcServiceAdapter):
+            service_name = "owners"
+
+            def __init__(self):
+                self.batch_get_calls = 0
+                self.batch_get_ids: list[Any] = []
+
+            def list(self, resource_class, page=1, page_size=25, filters=None):
+                return PagedResult(items=[], total=0)
+
+            def get(self, resource_class, pk):
+                return None
+
+            def batch_get(self, resource_class, pks):
+                self.batch_get_calls += 1
+                self.batch_get_ids.extend(pks)
+                return {pk: OwnerResource(id=pk, name=f"Owner-{pk}") for pk in pks}
+
+        class ItemAdmin(GrpcResourceAdmin):
+            resource_class = ItemResource
+            service_name = "items"
+
+        owner_adapter = OwnerAdapter()
+        reset_registry.register("owners", owner_adapter)
+
+        admin = ItemAdmin(admin_site=AdminSite())
+        request = RequestFactory().get("/")
+
+        first_render = [
+            ItemResource(id=1, title="A", owner_id=10),
+            ItemResource(id=2, title="B", owner_id=20),
+        ]
+        second_render = [
+            ItemResource(id=1, title="A", owner_id=30),
+            ItemResource(id=2, title="B", owner_id=40),
+        ]
+
+        cache_one = admin._preload_fk_displays(request, first_render)
+        cache_two = admin._preload_fk_displays(request, second_render)
+
+        assert owner_adapter.batch_get_calls == 2
+        assert sorted(owner_adapter.batch_get_ids) == [10, 20, 30, 40]
+        assert cache_one["owner_id"] == {10: "Owner-10", 20: "Owner-20"}
+        assert cache_two["owner_id"] == {30: "Owner-30", 40: "Owner-40"}
+
+    def test_batch_get_receives_fk_target_resource_class(self, reset_registry):
+        """FK preload must pass the configured target resource class to batch_get."""
+
+        class OwnerResource(BaseGrpcResource):
+            class Meta:
+                app_label = "shop"
+                model_name = "owner"
+
+            fields = [
+                IntegerFieldConfig(name="id"),
+                CharFieldConfig(name="name"),
+            ]
+
+        class ItemResource(BaseGrpcResource):
+            class Meta:
+                app_label = "shop"
+                model_name = "item"
+
+            fields = [
+                IntegerFieldConfig(name="id"),
+                CharFieldConfig(name="title"),
+                FKFieldConfig(
+                    name="owner_id",
+                    service="owners",
+                    display_field="name",
+                    resource_class=OwnerResource,
+                ),
+            ]
+
+        class OwnerAdapter(BaseGrpcServiceAdapter):
+            service_name = "owners"
+
+            def __init__(self):
+                self.batch_get_resource_classes: list[type] = []
+
+            def list(self, resource_class, page=1, page_size=25, filters=None):
+                return PagedResult(items=[], total=0)
+
+            def get(self, resource_class, pk):
+                return None
+
+            def batch_get(self, resource_class, pks):
+                self.batch_get_resource_classes.append(resource_class)
+                return {pk: OwnerResource(id=pk, name=f"Owner-{pk}") for pk in pks}
+
+        owner_adapter = OwnerAdapter()
+        reset_registry.register("owners", owner_adapter)
+
+        class ItemAdmin(GrpcResourceAdmin):
+            resource_class = ItemResource
+            service_name = "items"
+
+        admin = ItemAdmin(admin_site=AdminSite())
+        request = RequestFactory().get("/")
+        admin._preload_fk_displays(request, [ItemResource(id=1, title="A", owner_id=10)])
+
+        assert len(owner_adapter.batch_get_resource_classes) == 1
+        assert owner_adapter.batch_get_resource_classes[0] is OwnerResource
+
+    def test_batch_get_falls_back_to_row_resource_class(self, reset_registry):
+        """Without an explicit FK target resource class, batch_get receives the row class."""
+
+        class ItemResource(BaseGrpcResource):
+            class Meta:
+                app_label = "shop"
+                model_name = "item"
+
+            fields = [
+                IntegerFieldConfig(name="id"),
+                CharFieldConfig(name="title"),
+                FKFieldConfig(name="owner_id", service="owners", display_field="name"),
+            ]
+
+        class OwnerAdapter(BaseGrpcServiceAdapter):
+            service_name = "owners"
+
+            def __init__(self):
+                self.batch_get_resource_classes: list[type] = []
+
+            def list(self, resource_class, page=1, page_size=25, filters=None):
+                return PagedResult(items=[], total=0)
+
+            def get(self, resource_class, pk):
+                return None
+
+            def batch_get(self, resource_class, pks):
+                self.batch_get_resource_classes.append(resource_class)
+                return {pk: Mock(name=f"Owner-{pk}") for pk in pks}
+
+        owner_adapter = OwnerAdapter()
+        reset_registry.register("owners", owner_adapter)
+
+        class ItemAdmin(GrpcResourceAdmin):
+            resource_class = ItemResource
+            service_name = "items"
+
+        admin = ItemAdmin(admin_site=AdminSite())
+        request = RequestFactory().get("/")
+        admin._preload_fk_displays(request, [ItemResource(id=1, title="A", owner_id=10)])
+
+        assert len(owner_adapter.batch_get_resource_classes) == 1
+        assert owner_adapter.batch_get_resource_classes[0] is ItemResource
+
+
+class TestCursorFilterFingerprint:
+    def test_mismatched___grpc_filter_fp_resets_cursor(self, reset_registry):
+        from unittest.mock import MagicMock
+
+
+        class CursorResource(BaseGrpcResource):
+            class Meta:
+                app_label = "shop"
+                model_name = "cursoritem"
+
+            fields = [
+                IntegerFieldConfig(name="id"),
+                CharFieldConfig(name="name"),
+            ]
+
+        class CursorAdmin(GrpcResourceAdmin):
+            resource_class = CursorResource
+            service_name = "cursoritems"
+            grpc_cursor_pagination = True
+            grpc_filter_config = ["name"]
+
+        adapter = MagicMock()
+        adapter.list.return_value = PagedResult(
+            items=[CursorResource(id=1, name="A")], total=1
+        )
+        reset_registry.register("cursoritems", adapter)
+
+        admin = CursorAdmin(admin_site=AdminSite())
+        request = RequestFactory().get("/?cursor=abc123&__grpc_filter_fp=oldfp&name=A")
+        cl = GrpcChangeList(
+            request=request,
+            model=admin.model,
+            list_display=["name"],
+            list_display_links=["name"],
+            list_filter=[],
+            date_hierarchy=None,
+            search_fields=[],
+            list_select_related=False,
+            list_per_page=25,
+            list_max_show_all=200,
+            list_editable=[],
+            model_admin=admin,
+            sortable_by=["name"],
+            search_help_text="",
+        )
+        cl.get_results(request)
+
+        adapter.list.assert_called()
+        call_kwargs = adapter.list.call_args
+        filters = call_kwargs.kwargs.get("filters", {})
+        assert "cursor" not in filters, "cursor should be reset when filter_fp mismatches"
+
+    def test_missing___grpc_filter_fp_with_active_filters_resets_cursor(self, reset_registry):
+        from unittest.mock import MagicMock
+
+        class CursorResource(BaseGrpcResource):
+            class Meta:
+                app_label = "shop"
+                model_name = "cursoritem"
+
+            fields = [
+                IntegerFieldConfig(name="id"),
+                CharFieldConfig(name="name"),
+            ]
+
+        class CursorAdmin(GrpcResourceAdmin):
+            resource_class = CursorResource
+            service_name = "cursoritems"
+            grpc_cursor_pagination = True
+            grpc_filter_config = ["name"]
+
+        adapter = MagicMock()
+        adapter.list.return_value = PagedResult(
+            items=[CursorResource(id=1, name="A")], total=1
+        )
+        reset_registry.register("cursoritems", adapter)
+
+        admin = CursorAdmin(admin_site=AdminSite())
+        request = RequestFactory().get("/?cursor=abc123&name=A")
+        cl = GrpcChangeList(
+            request=request,
+            model=admin.model,
+            list_display=["name"],
+            list_display_links=["name"],
+            list_filter=[],
+            date_hierarchy=None,
+            search_fields=[],
+            list_select_related=False,
+            list_per_page=25,
+            list_max_show_all=200,
+            list_editable=[],
+            model_admin=admin,
+            sortable_by=["name"],
+            search_help_text="",
+        )
+        cl.get_results(request)
+
+        call_kwargs = adapter.list.call_args
+        filters = call_kwargs.kwargs.get("filters", {})
+        assert "cursor" not in filters, "cursor should be reset when filter_fp is missing with active filters"
+
+    def test_next_cursor_url_includes___grpc_filter_fp_when_filters_active(self, reset_registry):
+        from unittest.mock import MagicMock
+
+        class CursorResource(BaseGrpcResource):
+            class Meta:
+                app_label = "shop"
+                model_name = "cursoritem"
+
+            fields = [
+                IntegerFieldConfig(name="id"),
+                CharFieldConfig(name="name"),
+            ]
+
+        class CursorAdmin(GrpcResourceAdmin):
+            resource_class = CursorResource
+            service_name = "cursoritems"
+            grpc_cursor_pagination = True
+            grpc_filter_config = ["name"]
+
+        adapter = MagicMock()
+        adapter.list.return_value = PagedResult(
+            items=[CursorResource(id=1, name="A")],
+            total=1,
+            next_cursor="nxt",
+        )
+        reset_registry.register("cursoritems", adapter)
+
+        admin = CursorAdmin(admin_site=AdminSite())
+        request = RequestFactory().get("/?name=A")
+        cl = GrpcChangeList(
+            request=request,
+            model=admin.model,
+            list_display=["name"],
+            list_display_links=["name"],
+            list_filter=[],
+            date_hierarchy=None,
+            search_fields=[],
+            list_select_related=False,
+            list_per_page=25,
+            list_max_show_all=200,
+            list_editable=[],
+            model_admin=admin,
+            sortable_by=["name"],
+            search_help_text="",
+        )
+        cl.get_results(request)
+
+        assert cl.cursor_next_url is not None
+        assert "__grpc_filter_fp=" in cl.cursor_next_url
+        assert "cursor=nxt" in cl.cursor_next_url
+
+    def test_next_cursor_url_omits___grpc_filter_fp_without_active_filters(self, reset_registry):
+        from unittest.mock import MagicMock
+
+        class CursorResource(BaseGrpcResource):
+            class Meta:
+                app_label = "shop"
+                model_name = "cursoritem"
+
+            fields = [
+                IntegerFieldConfig(name="id"),
+                CharFieldConfig(name="name"),
+            ]
+
+        class CursorAdmin(GrpcResourceAdmin):
+            resource_class = CursorResource
+            service_name = "cursoritems"
+            grpc_cursor_pagination = True
+
+        adapter = MagicMock()
+        adapter.list.return_value = PagedResult(
+            items=[CursorResource(id=1, name="A")],
+            total=1,
+            next_cursor="nxt",
+        )
+        reset_registry.register("cursoritems", adapter)
+
+        admin = CursorAdmin(admin_site=AdminSite())
+        request = RequestFactory().get("/")
+        cl = GrpcChangeList(
+            request=request,
+            model=admin.model,
+            list_display=["name"],
+            list_display_links=["name"],
+            list_filter=[],
+            date_hierarchy=None,
+            search_fields=[],
+            list_select_related=False,
+            list_per_page=25,
+            list_max_show_all=200,
+            list_editable=[],
+            model_admin=admin,
+            sortable_by=["name"],
+            search_help_text="",
+        )
+        cl.get_results(request)
+
+        assert cl.cursor_next_url is not None
+        assert "__grpc_filter_fp" not in cl.cursor_next_url
+        assert "cursor=nxt" in cl.cursor_next_url
+

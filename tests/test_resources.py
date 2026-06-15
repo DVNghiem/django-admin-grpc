@@ -14,6 +14,7 @@ from django_admin_grpc.resources import (
     FloatFieldConfig,
     IntegerFieldConfig,
     TextFieldConfig,
+    resolve_source_path,
 )
 
 
@@ -52,6 +53,59 @@ class TestCharFieldConfig:
         assert fc.editable is True
         assert fc.detail_only is True
         assert fc.list_only is False
+
+    def test_field_ordering(self):
+        class OrderedResource(BaseGrpcResource):
+            class Meta:
+                app_label = "test"
+                model_name = "ordered"
+
+            fields = [
+                CharFieldConfig(name="b"),
+                CharFieldConfig(name="a"),
+                CharFieldConfig(name="c"),
+            ]
+
+        response = {"a": 1, "b": 2, "c": 3}
+        resource = OrderedResource.from_response(response)
+        assert list(resource.to_dict().keys()) == ["b", "a", "c"]
+
+
+class TestResolveSourcePath:
+    def test_top_level_attr(self):
+        class Obj:
+            name = "Alice"
+
+        assert resolve_source_path(Obj(), "name") == "Alice"
+
+    def test_nested_attr(self):
+        class Inner:
+            value = 42
+
+        class Outer:
+            inner = Inner()
+
+        assert resolve_source_path(Outer(), "inner.value") == 42
+
+    def test_dict_response(self):
+        response = {"user": {"name": "Bob"}}
+        assert resolve_source_path(response, "user.name") == "Bob"
+
+    def test_missing_intermediate_returns_none(self):
+        class Outer:
+            inner = None
+
+        assert resolve_source_path(Outer(), "inner.value") is None
+
+    def test_mixed_dict_object(self):
+        class Inner:
+            value = 7
+
+        response = {"inner": Inner()}
+        assert resolve_source_path(response, "inner.value") == 7
+
+    def test_missing_top_level_returns_none(self):
+        assert resolve_source_path({}, "missing") is None
 
 
 class TestChoicesFieldConfig:
@@ -209,6 +263,55 @@ class TestBaseGrpcResource:
 
         p = PriceResource.from_response({"value": 99.99})
         assert p.amount == 99.99
+
+    def test_from_response_nested_source(self):
+        class NestedResource(BaseGrpcResource):
+            class Meta:
+                app_label = "test"
+                model_name = "nested"
+
+            fields = [
+                CharFieldConfig(name="author", source="user.name"),
+            ]
+
+        p = NestedResource.from_response({"user": {"name": "Carol"}})
+        assert p.author == "Carol"
+
+    def test_from_response_uses_initial_when_missing(self):
+        class DefaultedResource(BaseGrpcResource):
+            class Meta:
+                app_label = "test"
+                model_name = "defaulted"
+
+            fields = [
+                CharFieldConfig(name="status", initial="pending"),
+                BooleanFieldConfig(name="active", initial=True),
+            ]
+
+        r = DefaultedResource.from_response({})
+        assert r.status == "pending"
+        assert r.active is True
+
+    def test_to_dict_preserves_field_order(self):
+        class OrderedResource(BaseGrpcResource):
+            class Meta:
+                app_label = "test"
+                model_name = "ordered"
+
+            fields = [
+                CharFieldConfig(name="b"),
+                CharFieldConfig(name="a"),
+                CharFieldConfig(name="c"),
+            ]
+
+        resource = OrderedResource(a=1, b=2, c=3)
+        assert list(resource.to_dict().keys()) == ["b", "a", "c"]
+        assert resource.to_dict() == {"b": 2, "a": 1, "c": 3}
+
+    def test_to_dict_missing_values_are_none(self):
+        resource = ProductResource(sku="ABC")
+        assert resource.to_dict()["sku"] == "ABC"
+        assert resource.to_dict()["name"] is None
 
     def test_admin_model(self):
         fake_model = ProductResource.admin_model()

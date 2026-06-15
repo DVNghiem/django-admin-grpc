@@ -250,17 +250,30 @@ class ModelWrapper:
     instance to the admin templates (adds ``_meta`` and ``serializable_value``).
     """
 
-    def __init__(self, instance: Any, fake_model_meta: FakeModelMeta) -> None:
+    def __init__(
+        self,
+        instance: Any,
+        fake_model_meta: FakeModelMeta,
+        fk_display_cache: dict[str, dict[Any, Any]] | None = None,
+    ) -> None:
         object.__setattr__(self, "_instance", instance)
         object.__setattr__(self, "_meta", fake_model_meta)
+        object.__setattr__(self, "_fk_display_cache", fk_display_cache or {})
 
     def __getattr__(self, name: str) -> Any:
-        if name in ("_meta", "_instance"):
+        if name in ("_meta", "_instance", "_fk_display_cache"):
             return object.__getattribute__(self, name)
+        cache = object.__getattribute__(self, "_fk_display_cache")
+        if cache and name in cache:
+            field_cache = cache[name]
+            raw_value = getattr(self._instance, name, None)
+            if isinstance(field_cache, dict):
+                return field_cache.get(raw_value, raw_value)
+            return field_cache
         return getattr(self._instance, name)
 
     def __setattr__(self, name: str, value: Any) -> None:
-        if name in ("_meta", "_instance"):
+        if name in ("_meta", "_instance", "_fk_display_cache"):
             object.__setattr__(self, name, value)
         else:
             setattr(self._instance, name, value)

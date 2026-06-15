@@ -3,6 +3,8 @@ Paginator and result types for gRPC-backed list views.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -27,6 +29,23 @@ class PagedResult:
     page: int = 1
     page_size: int = 25
     next_cursor: str | None = None
+
+
+def compute_filter_fingerprint(filters: dict[str, Any]) -> str:
+    """
+    Return a short stable fingerprint for *filters*.
+
+    The fingerprint is deterministic regardless of key insertion order because
+    the dictionary is serialized as JSON with sorted keys.
+
+    Args:
+        filters: A filter dictionary (values should be JSON-serializable).
+
+    Returns:
+        A short SHA-256 hex prefix that uniquely identifies the filter set.
+    """
+    canonical = json.dumps(filters, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(canonical.encode()).hexdigest()[:16]
 
 
 class GrpcPaginator(Paginator):
