@@ -1,7 +1,10 @@
 """
 Tests for django_admin_grpc.registry module.
 """
-from unittest.mock import Mock
+import threading
+from unittest.mock import Mock, patch
+
+import pytest
 
 from django_admin_grpc.registry import AdapterRegistry, adapter_registry
 
@@ -57,6 +60,156 @@ class TestAdapterRegistry:
     def test_unregister_missing_is_no_op(self):
         registry = AdapterRegistry()
         registry.unregister("missing")  # should not raise
+
+    def test_freeze_raises_on_register(self):
+        registry = AdapterRegistry()
+        registry.freeze()
+        with pytest.raises(RuntimeError, match="frozen"):
+            registry.register("svc", Mock())
+
+    def test_register_rechecks_frozen_inside_lock(self):
+        """Race: freeze happens after the outside check but before the lock."""
+        registry = AdapterRegistry()
+
+        class FreezingRLock:
+            def __init__(self):
+                self._lock = threading.RLock()
+                self._did_freeze = False
+
+            def acquire(self, *args, **kwargs):
+                if not self._did_freeze:
+                    self._did_freeze = True
+                    registry.freeze()
+                return self._lock.acquire(*args, **kwargs)
+
+            def release(self):
+                return self._lock.release()
+
+            def __enter__(self):
+                self.acquire()
+                return self
+
+            def __exit__(self, *args):
+                self.release()
+
+        with patch.object(registry, "_lock", FreezingRLock()), pytest.raises(
+            RuntimeError, match="frozen"
+        ):
+            registry.register("svc", Mock())
+
+    def test_freeze_raises_on_unregister(self):
+        registry = AdapterRegistry()
+        registry.register("svc", Mock())
+        registry.freeze()
+        with pytest.raises(RuntimeError, match="frozen"):
+            registry.unregister("svc")
+
+    def test_unregister_rechecks_frozen_inside_lock(self):
+        """Race: freeze happens after the outside check but before the lock."""
+        registry = AdapterRegistry()
+        registry.register("svc", Mock())
+
+        class FreezingRLock:
+            def __init__(self):
+                self._lock = threading.RLock()
+                self._did_freeze = False
+
+            def acquire(self, *args, **kwargs):
+                if not self._did_freeze:
+                    self._did_freeze = True
+                    registry.freeze()
+                return self._lock.acquire(*args, **kwargs)
+
+            def release(self):
+                return self._lock.release()
+
+            def __enter__(self):
+                self.acquire()
+                return self
+
+            def __exit__(self, *args):
+                self.release()
+
+        with patch.object(registry, "_lock", FreezingRLock()), pytest.raises(
+            RuntimeError, match="frozen"
+        ):
+            registry.unregister("svc")
+
+    def test_freeze_raises_on_clear(self):
+        registry = AdapterRegistry()
+        registry.freeze()
+        with pytest.raises(RuntimeError, match="frozen"):
+            registry.clear()
+
+    def test_clear_rechecks_frozen_inside_lock(self):
+        """Race: freeze happens after the outside check but before the lock."""
+        registry = AdapterRegistry()
+        registry.register("svc", Mock())
+
+        class FreezingRLock:
+            def __init__(self):
+                self._lock = threading.RLock()
+                self._did_freeze = False
+
+            def acquire(self, *args, **kwargs):
+                if not self._did_freeze:
+                    self._did_freeze = True
+                    registry.freeze()
+                return self._lock.acquire(*args, **kwargs)
+
+            def release(self):
+                return self._lock.release()
+
+            def __enter__(self):
+                self.acquire()
+                return self
+
+            def __exit__(self, *args):
+                self.release()
+
+        with patch.object(registry, "_lock", FreezingRLock()), pytest.raises(
+            RuntimeError, match="frozen"
+        ):
+            registry.clear()
+
+    def test_get_works_after_freeze(self):
+        registry = AdapterRegistry()
+        adapter = Mock()
+        registry.register("svc", adapter)
+        registry.freeze()
+        assert registry.get_adapter("svc") is adapter
+
+    def test_close_all_closes_adapters(self):
+        registry = AdapterRegistry()
+        a1 = Mock()
+        a1.service_name = "a"
+        a2 = Mock()
+        a2.service_name = "b"
+        registry.register("a", a1)
+        registry.register("b", a2)
+        registry.close_all()
+        a1.close.assert_called_once()
+        a2.close.assert_called_once()
+
+    def test_concurrent_registration(self):
+        registry = AdapterRegistry()
+        adapters = [Mock() for _ in range(50)]
+        errors: list[Exception] = []
+
+        def register(idx: int) -> None:
+            try:
+                registry.register(f"svc_{idx}", adapters[idx])
+            except Exception as exc:  # pragma: no cover
+                errors.append(exc)
+
+        threads = [threading.Thread(target=register, args=(i,)) for i in range(50)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors
+        assert len(registry.list_services()) == 50
 
 
 class TestAdapterRegistryFixture:

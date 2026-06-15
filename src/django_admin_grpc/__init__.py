@@ -7,11 +7,16 @@ A reusable Django package for creating admin interfaces backed by gRPC services.
 from django_admin_grpc.adapters import BaseGrpcServiceAdapter
 from django_admin_grpc.admin import GrpcResourceAdmin, grpc_action
 from django_admin_grpc.exceptions import (
+    GrpcAbortedError,
     GrpcAdminError,
+    GrpcAlreadyExistsError,
+    GrpcCancelledError,
     GrpcDeadlineExceededError,
+    GrpcFailedPreconditionError,
     GrpcInvalidArgumentError,
     GrpcNotFoundError,
     GrpcPermissionDeniedError,
+    GrpcResourceExhaustedError,
     GrpcUnavailableError,
 )
 from django_admin_grpc.filters import (
@@ -39,7 +44,7 @@ from django_admin_grpc.resources import (
     TextFieldConfig,
 )
 
-__version__ = "0.2.2"
+__version__ = "0.3.0"
 
 __all__ = [
     "GUIDE",
@@ -59,11 +64,16 @@ __all__ = [
     "IntegerFieldConfig",
     "TextFieldConfig",
     "GrpcAdminError",
+    "GrpcAlreadyExistsError",
     "GrpcNotFoundError",
     "GrpcPermissionDeniedError",
     "GrpcInvalidArgumentError",
     "GrpcUnavailableError",
     "GrpcDeadlineExceededError",
+    "GrpcResourceExhaustedError",
+    "GrpcFailedPreconditionError",
+    "GrpcAbortedError",
+    "GrpcCancelledError",
     "GrpcPaginator",
     "PagedResult",
     "GrpcBooleanFieldListFilter",

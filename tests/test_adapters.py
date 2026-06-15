@@ -107,6 +107,57 @@ class TestBaseGrpcServiceAdapterDefaultMethods:
         adapter = MinimalAdapter()
         adapter.close()  # should not raise
 
+    def test_close_closes_channel(self):
+        adapter = MinimalAdapter()
+        mock_channel = Mock(spec=grpc.Channel)
+        adapter._channel = mock_channel
+        adapter.close()
+        mock_channel.close.assert_called_once()
+
+    def test_create_channel_wraps_and_returns(self):
+        adapter = MinimalAdapter()
+        raw_channel = Mock(spec=grpc.Channel)
+        wrapped = Mock(spec=grpc.Channel)
+
+        with (
+            patch("django_admin_grpc.adapters.grpc.insecure_channel", return_value=raw_channel),
+            patch.object(adapter, "_wrap_channel", return_value=wrapped),
+        ):
+            result = adapter._create_channel("svc:50051")
+
+        assert result is wrapped
+
+    def test_create_channel_closes_raw_when_wrap_raises(self):
+        adapter = MinimalAdapter()
+        raw_channel = Mock(spec=grpc.Channel)
+
+        with (
+            patch("django_admin_grpc.adapters.grpc.insecure_channel", return_value=raw_channel),
+            patch.object(adapter, "_wrap_channel", side_effect=RuntimeError("boom")),
+            pytest.raises(RuntimeError, match="boom"),
+        ):
+            adapter._create_channel("svc:50051")
+
+        raw_channel.close.assert_called_once()
+
+    def test_batch_get_default_loops_get(self):
+        class TrackingAdapter(MinimalAdapter):
+            def __init__(self):
+                super().__init__()
+                self.get_calls = []
+
+            def get(self, resource_class, pk):
+                self.get_calls.append(pk)
+                obj = Mock()
+                obj.pk = pk
+                return obj
+
+        tracking = TrackingAdapter()
+        resource_class = Mock()
+        result = tracking.batch_get(resource_class, ["1", "2", "3"])
+        assert tracking.get_calls == ["1", "2", "3"]
+        assert set(result.keys()) == {"1", "2", "3"}
+
 
 class TestBaseGrpcServiceAdapterHelpers:
     def test_map_rpc_error(self):
@@ -115,6 +166,7 @@ class TestBaseGrpcServiceAdapterHelpers:
         class MockRpcError(grpc.RpcError):
             def code(self):
                 return grpc.StatusCode.NOT_FOUND
+
             def details(self):
                 return "item not found"
 

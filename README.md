@@ -162,10 +162,8 @@ class NetworkRulesAdapter(BaseGrpcServiceAdapter):
     @property
     def channel(self):
         if self._channel is None:
-            raw = grpc.insecure_channel("network-service:50051")
-            self._channel = self._wrap_channel(raw)
+            self._channel = self._create_channel("network-service:50051")
         return self._channel
-
     def list(self, resource_class, page=1, page_size=25, filters=None):
         stub = NetworkRulesStub(self.channel)
         request = ListRulesRequest(page=page, page_size=page_size)
@@ -381,17 +379,19 @@ Because `queryset` is a `GrpcFakeQuerySet`, iterate over it to access the wrappe
 
 ## Error Handling
 
-gRPC errors are caught at the adapter boundary and mapped to typed exceptions. The admin displays them as Django messages.
-
 | gRPC Status Code | Mapped Exception | Admin Behavior |
 |------------------|------------------|----------------|
 | `NOT_FOUND` | `GrpcNotFoundError` | Redirects to "object does not exist" page. |
 | `PERMISSION_DENIED` / `UNAUTHENTICATED` | `GrpcPermissionDeniedError` | Shown as red error message; user stays on the page. |
 | `INVALID_ARGUMENT` | `GrpcInvalidArgumentError` | Shown as red error message (validation failed). |
+| `ALREADY_EXISTS` | `GrpcAlreadyExistsError` | Shown as red error message ("Record already exists"). |
+| `FAILED_PRECONDITION` | `GrpcFailedPreconditionError` | Shown as red error message. |
+| `RESOURCE_EXHAUSTED` | `GrpcResourceExhaustedError` | Shown as yellow warning ("Service is busy, try again later"). |
+| `ABORTED` | `GrpcAbortedError` | Shown as yellow warning ("Request aborted, please retry"). |
+| `CANCELLED` | `GrpcCancelledError` | Shown as yellow warning ("Request was cancelled"). |
 | `UNAVAILABLE` | `GrpcUnavailableError` | Shown as red error message (service down). |
 | `DEADLINE_EXCEEDED` | `GrpcDeadlineExceededError` | Shown as red error message (timeout). |
 | Other | `GrpcAdminError` | Shown as generic error message. |
-
 **Mapping errors in your adapter:**
 
 ```python

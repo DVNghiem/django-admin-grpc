@@ -4,7 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "django-admin-grpc"
-version = "0.2.2"
+version = "0.3.0"
+
 description = "Django Admin backed by gRPC services — no ORM required."
 readme = "README.md"
 license = { text = "MIT" }
@@ -57,6 +58,7 @@ packages = ["src/django_admin_grpc"]
 include = [
     "/src",
     "/README.md",
+    "/CHANGELOG.md",
     "/LICENSE",
 ]
 

@@ -163,8 +163,8 @@ wheels = [
 ]
 
 [[package]]
-name = "django-grpc-admin"
-version = "0.1.0"
+name = "django-admin-grpc"
+version = "0.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "django" },

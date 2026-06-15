@@ -16,6 +16,32 @@ from django_admin_grpc.models import FakeModelBase, FakeModelMeta, GrpcFakeQuery
 logger = logging.getLogger(__name__)
 
 
+def resolve_source_path(obj: Any, path: str) -> Any:
+    """
+    Resolve a dot-separated *path* against *obj* using attribute or dict lookup.
+
+    Missing attributes/keys or intermediate ``None`` values return ``None``.
+
+    Args:
+        obj: The object or mapping to traverse.
+        path: A dot-separated path such as ``"nested.value"``.
+
+    Returns:
+        The resolved value, or ``None`` if any segment is missing.
+    """
+    if not path:
+        return obj
+    current: Any = obj
+    for segment in path.split("."):
+        if current is None:
+            return None
+        if isinstance(current, dict):
+            current = current.get(segment)
+        else:
+            current = getattr(current, segment, None)
+    return current
+
+
 @dataclass(kw_only=True)
 class BaseFieldConfig:
     """Common metadata for every field on a ``BaseGrpcResource``."""
@@ -126,6 +152,7 @@ class FKFieldConfig(BaseFieldConfig):
     display_field: str | None = None
     service: str | None = None
     get_method: str = "get"
+    resource_class: type[BaseGrpcResource] | None = None
     choices: list[tuple[Any, str]] = field(default_factory=list)
     choices_loader: Callable[[], Iterable[tuple[Any, str]]] | None = None
 
@@ -184,6 +211,10 @@ class BaseGrpcResource:
     def __str__(self) -> str:
         return str(self.pk)
 
+    def to_dict(self) -> dict[str, Any]:
+        """Return a mapping of field names to current values."""
+        return {fc.name: getattr(self, fc.name, None) for fc in self.fields}
+
     @classmethod
     def get_field_configs(cls) -> list[BaseFieldConfig]:
         """Return the list of field configurations for this resource."""
@@ -213,12 +244,17 @@ class BaseGrpcResource:
         kwargs: dict[str, Any] = {}
         for fc in cls.fields:
             source = fc.source or fc.name
-            if isinstance(response, dict):
-                kwargs[fc.name] = response.get(source)
+            if "." in source:
+                value = resolve_source_path(response, source)
+            elif isinstance(response, dict):
+                value = response.get(source)
             elif hasattr(response, source):
-                kwargs[fc.name] = getattr(response, source)
+                value = getattr(response, source)
             else:
-                kwargs[fc.name] = None
+                value = None
+            if value is None and fc.initial is not None:
+                value = fc.initial
+            kwargs[fc.name] = value
         return cls(**kwargs)
 
     @classmethod

@@ -157,6 +157,21 @@ class TestModelWrapper:
         assert wrapper.id == 1
         assert wrapper.name == "Widget"
 
+    def test_fk_display_cache_hit(self, fake_meta):
+        instance = TestResource(id=1, name="Widget")
+        wrapper = ModelWrapper(instance, fake_meta, fk_display_cache={"category": "Books"})
+        assert wrapper.category == "Books"
+
+    def test_fk_display_cache_miss_uses_instance(self, fake_meta):
+        instance = TestResource(id=1, name="Widget")
+        wrapper = ModelWrapper(instance, fake_meta, fk_display_cache={"other": "value"})
+        assert wrapper.name == "Widget"
+
+    def test_fk_display_cache_no_instance_attr(self, fake_meta):
+        instance = TestResource(id=1, name="Widget")
+        wrapper = ModelWrapper(instance, fake_meta, fk_display_cache={"missing": "cached"})
+        assert wrapper.missing == "cached"
+
     def test_meta_attribute(self, fake_meta):
         instance = TestResource(id=1)
         wrapper = ModelWrapper(instance, fake_meta)

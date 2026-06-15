@@ -20,8 +20,7 @@ class CatalogAdapter(BaseGrpcServiceAdapter):
     @property
     def channel(self):
         if self._channel is None:
-            raw = grpc.insecure_channel("catalog-service:50051")
-            self._channel = self._wrap_channel(raw)
+            self._channel = self._create_channel("catalog-service:50051")
         return self._channel
 
     def list(self, resource_class, page=1, page_size=25, filters=None):
@@ -154,14 +153,15 @@ The adapter exposes boolean properties so the admin can check what operations ar
 
 #### `_wrap_channel(channel)`
 
-Wraps a raw gRPC channel with the trace interceptor. Call this inside your channel property so metadata is injected into every call.
+Wraps a raw gRPC channel with the trace interceptor. Prefer using `_create_channel()`
+in your channel property so metadata is injected into every call and the raw
+channel is closed automatically if wrapping fails.
 
 ```python
 @property
 def channel(self):
     if self._channel is None:
-        raw = grpc.insecure_channel("service:50051")
-        self._channel = self._wrap_channel(raw)
+        self._channel = self._create_channel("service:50051")
     return self._channel
 ```
 
@@ -254,8 +254,7 @@ class CatalogAdapter(BaseGrpcServiceAdapter):
     @property
     def channel(self):
         if self._channel is None:
-            raw = grpc.insecure_channel(self._target)
-            self._channel = self._wrap_channel(raw)
+            self._channel = self._create_channel(self._target)
         return self._channel
 
     @property
@@ -263,7 +262,6 @@ class CatalogAdapter(BaseGrpcServiceAdapter):
         if self._stub is None:
             self._stub = CatalogStub(self.channel)
         return self._stub
-```
 
 ### Error Handling
 

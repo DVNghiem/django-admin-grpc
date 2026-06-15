@@ -63,6 +63,35 @@ class GrpcDeadlineExceededError(GrpcAdminError):
     pass
 
 
+class GrpcAlreadyExistsError(GrpcAdminError):
+    """The requested resource already exists on the gRPC service."""
+
+    pass
+
+
+class GrpcResourceExhaustedError(GrpcAdminError):
+    """The gRPC service has exhausted a resource (quota, rate limit, etc.)."""
+
+    pass
+
+
+class GrpcFailedPreconditionError(GrpcAdminError):
+    """The request failed because a precondition was not met."""
+
+    pass
+
+
+class GrpcAbortedError(GrpcAdminError):
+    """The gRPC operation was aborted, usually retryable."""
+
+    pass
+
+
+class GrpcCancelledError(GrpcAdminError):
+    """The gRPC operation was cancelled by the client or server."""
+
+    pass
+
 def map_grpc_error(exc: grpc.RpcError) -> GrpcAdminError:
     """
     Map a grpc.RpcError to the appropriate GrpcAdminError subclass.
@@ -84,6 +113,11 @@ def map_grpc_error(exc: grpc.RpcError) -> GrpcAdminError:
         grpc.StatusCode.INVALID_ARGUMENT: GrpcInvalidArgumentError,
         grpc.StatusCode.UNAVAILABLE: GrpcUnavailableError,
         grpc.StatusCode.DEADLINE_EXCEEDED: GrpcDeadlineExceededError,
+        grpc.StatusCode.ALREADY_EXISTS: GrpcAlreadyExistsError,
+        grpc.StatusCode.RESOURCE_EXHAUSTED: GrpcResourceExhaustedError,
+        grpc.StatusCode.FAILED_PRECONDITION: GrpcFailedPreconditionError,
+        grpc.StatusCode.ABORTED: GrpcAbortedError,
+        grpc.StatusCode.CANCELLED: GrpcCancelledError,
     }
 
     exc_class = mapping.get(code, GrpcAdminError)
@@ -93,3 +127,39 @@ def map_grpc_error(exc: grpc.RpcError) -> GrpcAdminError:
         grpc_code=code,
         details=details,
     )
+
+
+def get_grpc_error_message(exc: GrpcAdminError) -> tuple[int, str]:
+    """
+    Return a Django messages level and a human-readable message for *exc*.
+
+    Args:
+        exc: A typed gRPC admin exception.
+
+    Returns:
+        A tuple of (level, message) suitable for ``messages.add_message``.
+    """
+    from django.contrib import messages
+
+    if isinstance(exc, GrpcAlreadyExistsError):
+        return messages.ERROR, "Record already exists"
+    if isinstance(exc, GrpcResourceExhaustedError):
+        return messages.WARNING, "Service is busy, try again later"
+    if isinstance(exc, GrpcFailedPreconditionError):
+        return messages.ERROR, exc.message or "Request failed precondition"
+    if isinstance(exc, GrpcAbortedError):
+        return messages.WARNING, "Request aborted, please retry"
+    if isinstance(exc, GrpcCancelledError):
+        return messages.WARNING, "Request was cancelled"
+    if isinstance(exc, GrpcNotFoundError):
+        return messages.ERROR, exc.message or "Record not found"
+    if isinstance(exc, GrpcPermissionDeniedError):
+        return messages.ERROR, exc.message or "Permission denied"
+    if isinstance(exc, GrpcInvalidArgumentError):
+        return messages.ERROR, exc.message or "Validation failed"
+    if isinstance(exc, GrpcUnavailableError):
+        return messages.ERROR, exc.message or "Service unavailable"
+    if isinstance(exc, GrpcDeadlineExceededError):
+        return messages.ERROR, exc.message or "Request timed out"
+    return messages.ERROR, exc.message or "An error occurred"
+
