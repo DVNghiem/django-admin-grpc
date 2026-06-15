@@ -1,6 +1,7 @@
 """
 Tests for django_admin_grpc.admin module.
 """
+
 from typing import Any
 from unittest.mock import Mock, patch
 
@@ -9,7 +10,14 @@ from django.contrib.admin.sites import AdminSite
 from django.test import RequestFactory
 
 from django_admin_grpc.adapters import BaseGrpcServiceAdapter
-from django_admin_grpc.admin import GrpcChangeList, GrpcResourceAdmin, grpc_action
+from django_admin_grpc.admin import (
+    AsyncGrpcResourceAdmin,
+    GrpcChangeList,
+    GrpcResourceAdmin,
+    grpc_action,
+    run_async,
+)
+from django_admin_grpc.async_adapter import BaseAsyncGrpcServiceAdapter
 from django_admin_grpc.models import GrpcFakeQuerySet
 from django_admin_grpc.paginator import PagedResult
 from django_admin_grpc.resources import (
@@ -766,7 +774,9 @@ class TestGrpcChangeList:
         # (Django ChangeList.__init__ calls get_results once, then we call it explicitly)
         adapter.list.assert_called()
         call_kwargs = adapter.list.call_args
-        assert call_kwargs.kwargs.get("page") == 1, f"Expected page=1, got page={call_kwargs.kwargs.get('page')}"
+        assert call_kwargs.kwargs.get("page") == 1, (
+            f"Expected page=1, got page={call_kwargs.kwargs.get('page')}"
+        )
 
 
 class TestGrpcResourceAdminDetailRows:
@@ -812,6 +822,7 @@ class TestGrpcResourceAdminResolveFk:
     def test_service_lookup(self, admin_instance, reset_registry):
         class FakeAdapter:
             service_name = "users"
+
             def get(self, resource_class, pk):
                 obj = Mock()
                 obj.name = "Alice"
@@ -822,9 +833,12 @@ class TestGrpcResourceAdminResolveFk:
         result = admin_instance.resolve_fk_value("owner", config, "1")
         assert result == "Alice"
 
-    def test_service_lookup_without_display_field_returns_fk_id(self, admin_instance, reset_registry):
+    def test_service_lookup_without_display_field_returns_fk_id(
+        self, admin_instance, reset_registry
+    ):
         class FakeAdapter:
             service_name = "users"
+
             def get(self, resource_class, pk):
                 obj = Mock()
                 obj.name = "Alice"
@@ -843,6 +857,7 @@ class TestGrpcResourceAdminResolveFk:
     def test_service_lookup_typeerror(self, admin_instance, reset_registry):
         class StrictAdapter:
             service_name = "strict"
+
             def get(self, resource_class, pk_id):
                 obj = Mock()
                 obj.name = "Bob"
@@ -915,10 +930,13 @@ class TestGrpcResourceAdminDeleteSelected:
     def test_delete_selected_with_errors(self, admin_instance, reset_registry):
         class BadAdapter(BaseGrpcServiceAdapter):
             service_name = "products"
+
             def list(self, resource_class, page=1, page_size=25, filters=None):
                 return PagedResult(items=[])
+
             def get(self, resource_class, pk):
                 return None
+
             def delete(self, resource_class, pk):
                 raise RuntimeError("boom")
 
@@ -939,6 +957,7 @@ class TestGrpcResourceAdminViews:
             class Meta:
                 app_label = "shop"
                 model_name = "item"
+
             fields = [
                 IntegerFieldConfig(name="id"),
                 CharFieldConfig(name="name"),
@@ -946,14 +965,19 @@ class TestGrpcResourceAdminViews:
 
         class ViewAdapter(BaseGrpcServiceAdapter):
             service_name = "items"
+
             def list(self, resource_class, page=1, page_size=25, filters=None):
                 return PagedResult(items=[ViewResource(id=1, name="A")], total=1, next_cursor="nxt")
+
             def get(self, resource_class, pk):
                 return ViewResource(id=1, name="A")
+
             def create(self, resource_class, data):
                 return ViewResource(**data)
+
             def update(self, resource_class, pk, data):
                 return ViewResource(id=pk, **data)
+
             def delete(self, resource_class, pk):
                 return True
 
@@ -1025,7 +1049,9 @@ class TestGrpcResourceAdminTemplateResolution:
         assert admin_instance._get_change_form_template() == "django_admin_grpc/change_form.html"
 
     def test_delete_confirm_template_default(self, admin_instance):
-        assert admin_instance._get_delete_confirm_template() == "django_admin_grpc/delete_confirm.html"
+        assert (
+            admin_instance._get_delete_confirm_template() == "django_admin_grpc/delete_confirm.html"
+        )
 
     def test_change_form_template_from_resource_meta(self):
         class TemplResource(BaseGrpcResource):
@@ -1033,6 +1059,7 @@ class TestGrpcResourceAdminTemplateResolution:
                 app_label = "shop"
                 model_name = "templ"
                 change_form_template = "custom/change.html"
+
             fields = [IntegerFieldConfig(name="id")]
 
         class TemplAdmin(GrpcResourceAdmin):
@@ -1048,6 +1075,7 @@ class TestGrpcResourceAdminTemplateResolution:
                 app_label = "shop"
                 model_name = "templ"
                 delete_confirm_template = "custom/delete.html"
+
             fields = [IntegerFieldConfig(name="id")]
 
         class TemplAdmin(GrpcResourceAdmin):
@@ -1085,6 +1113,7 @@ class TestGrpcAction:
 
     def test_decorator_can_call_apply_grpc_bulk_update(self):
         """Custom action can use apply_grpc_bulk_update with selected_pks."""
+
         class TrackingAdapter(MockAdapter):
             def __init__(self):
                 super().__init__()
@@ -1119,6 +1148,7 @@ class TestGrpcAction:
 
     def test_description_appears_in_get_actions(self):
         """Action description appears in get_actions() tuple."""
+
         class ActionAdmin(GrpcResourceAdmin):
             resource_class = ProductResource
             adapter_class = MockAdapter
@@ -1139,6 +1169,7 @@ class TestGrpcAction:
 
     def test_default_description_from_method_name(self):
         """Default description is derived from method name if not provided."""
+
         class ActionAdmin(GrpcResourceAdmin):
             resource_class = ProductResource
             adapter_class = MockAdapter
@@ -1157,6 +1188,7 @@ class TestGrpcAction:
 
     def test_existing_builtin_delete_still_works(self):
         """Built-in grpc_delete_selected continues to work alongside custom actions."""
+
         class ActionAdmin(GrpcResourceAdmin):
             resource_class = ProductResource
             adapter_class = MockAdapter
@@ -1177,6 +1209,7 @@ class TestGrpcAction:
 
     def test_permissions_parameter(self):
         """Permissions parameter is forwarded to the action wrapper."""
+
         class ActionAdmin(GrpcResourceAdmin):
             resource_class = ProductResource
             adapter_class = MockAdapter
@@ -1197,6 +1230,7 @@ class TestGrpcAction:
 
     def test_apply_grpc_bulk_update_accepts_list_directly(self):
         """apply_grpc_bulk_update can receive a list of PKs directly."""
+
         class TrackingAdapter(MockAdapter):
             def __init__(self):
                 super().__init__()
@@ -1215,9 +1249,7 @@ class TestGrpcAction:
         admin = BulkAdmin(admin_site=AdminSite())
         request = RequestFactory().post("/")
 
-        updated, errors = admin.apply_grpc_bulk_update(
-            request, ["5", "6"], {"name": "Bulk"}
-        )
+        updated, errors = admin.apply_grpc_bulk_update(request, ["5", "6"], {"name": "Bulk"})
 
         assert updated == 2
         assert errors == 0
@@ -1626,7 +1658,6 @@ class TestCursorFilterFingerprint:
     def test_mismatched___grpc_filter_fp_resets_cursor(self, reset_registry):
         from unittest.mock import MagicMock
 
-
         class CursorResource(BaseGrpcResource):
             class Meta:
                 app_label = "shop"
@@ -1644,9 +1675,7 @@ class TestCursorFilterFingerprint:
             grpc_filter_config = ["name"]
 
         adapter = MagicMock()
-        adapter.list.return_value = PagedResult(
-            items=[CursorResource(id=1, name="A")], total=1
-        )
+        adapter.list.return_value = PagedResult(items=[CursorResource(id=1, name="A")], total=1)
         reset_registry.register("cursoritems", adapter)
 
         admin = CursorAdmin(admin_site=AdminSite())
@@ -1694,9 +1723,7 @@ class TestCursorFilterFingerprint:
             grpc_filter_config = ["name"]
 
         adapter = MagicMock()
-        adapter.list.return_value = PagedResult(
-            items=[CursorResource(id=1, name="A")], total=1
-        )
+        adapter.list.return_value = PagedResult(items=[CursorResource(id=1, name="A")], total=1)
         reset_registry.register("cursoritems", adapter)
 
         admin = CursorAdmin(admin_site=AdminSite())
@@ -1721,7 +1748,9 @@ class TestCursorFilterFingerprint:
 
         call_kwargs = adapter.list.call_args
         filters = call_kwargs.kwargs.get("filters", {})
-        assert "cursor" not in filters, "cursor should be reset when filter_fp is missing with active filters"
+        assert "cursor" not in filters, (
+            "cursor should be reset when filter_fp is missing with active filters"
+        )
 
     def test_next_cursor_url_includes___grpc_filter_fp_when_filters_active(self, reset_registry):
         from unittest.mock import MagicMock
@@ -1824,3 +1853,566 @@ class TestCursorFilterFingerprint:
         assert "__grpc_filter_fp" not in cl.cursor_next_url
         assert "cursor=nxt" in cl.cursor_next_url
 
+
+class TestRunAsync:
+    def test_runs_coroutine_when_no_loop(self):
+        async def coro():
+            return 42
+
+        assert run_async(coro()) == 42
+
+    def test_rejects_non_coroutine(self):
+        with pytest.raises(TypeError, match="coroutine object"):
+            run_async("not a coroutine")
+
+    def test_fallback_when_loop_already_running(self):
+        import asyncio
+
+        async def inner():
+            async def coro():
+                return 123
+
+            return run_async(coro())
+
+        result = asyncio.run(inner())
+        assert result == 123
+
+
+class TestAsyncGrpcResourceAdmin:
+    def test_fetch_list_runs_async_adapter(self, reset_registry):
+        class AsyncItemAdapter(BaseAsyncGrpcServiceAdapter):
+            service_name = "asyncitems"
+            target = "svc:50051"
+
+            async def list(self, resource_class, page=1, page_size=25, filters=None):
+                return PagedResult(items=[resource_class(id=1, name="A")])
+
+            async def get(self, resource_class, pk):
+                return None
+
+        class AsyncItemResource(BaseGrpcResource):
+            class Meta:
+                app_label = "shop"
+                model_name = "asyncitem"
+
+            fields = [
+                IntegerFieldConfig(name="id"),
+                CharFieldConfig(name="name"),
+            ]
+
+        class AsyncItemAdmin(AsyncGrpcResourceAdmin):
+            resource_class = AsyncItemResource
+            service_name = "asyncitems"
+
+        adapter = AsyncItemAdapter()
+        reset_registry.register("asyncitems", adapter)
+
+        admin = AsyncItemAdmin(admin_site=AdminSite())
+        result = admin.fetch_list()
+        assert isinstance(result, PagedResult)
+        assert len(result.items) == 1
+        assert result.items[0].name == "A"
+
+    def test_fetch_one_runs_async_adapter(self, reset_registry):
+        class AsyncItemAdapter(BaseAsyncGrpcServiceAdapter):
+            service_name = "asyncitems"
+            target = "svc:50051"
+
+            async def list(self, resource_class, page=1, page_size=25, filters=None):
+                return PagedResult(items=[])
+
+            async def get(self, resource_class, pk):
+                return resource_class(id=pk, name="X")
+
+        class AsyncItemResource(BaseGrpcResource):
+            class Meta:
+                app_label = "shop"
+                model_name = "asyncitem"
+
+            fields = [
+                IntegerFieldConfig(name="id"),
+                CharFieldConfig(name="name"),
+            ]
+
+        class AsyncItemAdmin(AsyncGrpcResourceAdmin):
+            resource_class = AsyncItemResource
+            service_name = "asyncitems"
+
+        adapter = AsyncItemAdapter()
+        reset_registry.register("asyncitems", adapter)
+
+        admin = AsyncItemAdmin(admin_site=AdminSite())
+        wrapper = admin.fetch_one("7")
+        assert wrapper is not None
+        assert wrapper.name == "X"
+
+    def test_async_admin_falls_back_to_sync_adapter(self, reset_registry):
+        class SyncItemAdapter(BaseGrpcServiceAdapter):
+            service_name = "syncitems"
+
+            def list(self, resource_class, page=1, page_size=25, filters=None):
+                return PagedResult(items=[resource_class(id=1, name="S")])
+
+            def get(self, resource_class, pk):
+                return None
+
+        class ItemResource(BaseGrpcResource):
+            class Meta:
+                app_label = "shop"
+                model_name = "item"
+
+            fields = [
+                IntegerFieldConfig(name="id"),
+                CharFieldConfig(name="name"),
+            ]
+
+        class ItemAdmin(AsyncGrpcResourceAdmin):
+            resource_class = ItemResource
+            service_name = "syncitems"
+
+        reset_registry.register("syncitems", SyncItemAdapter())
+
+        admin = ItemAdmin(admin_site=AdminSite())
+        result = admin.fetch_list()
+        assert result.items[0].name == "S"
+
+    @pytest.mark.asyncio
+    async def test_async_changelist_view_delegates_to_sync_view(self, reset_registry):
+        from django.contrib.admin import AdminSite
+        from django.test import RequestFactory
+
+        class AsyncItemAdapter(BaseAsyncGrpcServiceAdapter):
+            service_name = "asyncitems"
+            target = "svc:50051"
+
+            async def list(self, resource_class, page=1, page_size=25, filters=None):
+                return PagedResult(items=[resource_class(id=1, name="A")])
+
+            async def get(self, resource_class, pk):
+                return None
+
+        class AsyncItemResource(BaseGrpcResource):
+            class Meta:
+                app_label = "shop"
+                model_name = "asyncitem"
+
+            fields = [
+                IntegerFieldConfig(name="id"),
+                CharFieldConfig(name="name"),
+            ]
+
+        class AsyncItemAdmin(AsyncGrpcResourceAdmin):
+            resource_class = AsyncItemResource
+            service_name = "asyncitems"
+            list_display = ["id", "name"]
+
+        reset_registry.register("asyncitems", AsyncItemAdapter())
+
+        admin = AsyncItemAdmin(admin_site=AdminSite())
+        request = RequestFactory().get("/")
+        request.user = Mock()
+        request.user.is_superuser = True
+        response = await admin.async_changelist_view(request)
+        assert response is not None
+
+    def test_get_adapter_consults_async_registry(self, reset_async_registry):
+        class AsyncItemAdapter(BaseAsyncGrpcServiceAdapter):
+            service_name = "asyncitems"
+            target = "svc:50051"
+
+            async def list(self, resource_class, page=1, page_size=25, filters=None):
+                return PagedResult(items=[])
+
+            async def get(self, resource_class, pk):
+                return None
+
+        class AsyncItemResource(BaseGrpcResource):
+            class Meta:
+                app_label = "shop"
+                model_name = "asyncitem"
+
+            fields = [
+                IntegerFieldConfig(name="id"),
+                CharFieldConfig(name="name"),
+            ]
+
+        class AsyncItemAdmin(AsyncGrpcResourceAdmin):
+            resource_class = AsyncItemResource
+            service_name = "asyncitems"
+
+        adapter = AsyncItemAdapter()
+        reset_async_registry.register("asyncitems", adapter)
+
+        admin = AsyncItemAdmin(admin_site=AdminSite())
+        assert admin.get_adapter() is adapter
+
+    def test_async_registry_only_fetch_list_works(self, reset_async_registry):
+        """Regression: AsyncGrpcResourceAdmin must work with only AsyncAdapterRegistry."""
+
+        class AsyncItemAdapter(BaseAsyncGrpcServiceAdapter):
+            service_name = "asyncitems"
+            target = "svc:50051"
+
+            async def list(self, resource_class, page=1, page_size=25, filters=None):
+                return PagedResult(items=[resource_class(id=1, name="A")])
+
+            async def get(self, resource_class, pk):
+                return None
+
+        class AsyncItemResource(BaseGrpcResource):
+            class Meta:
+                app_label = "shop"
+                model_name = "asyncitem"
+
+            fields = [
+                IntegerFieldConfig(name="id"),
+                CharFieldConfig(name="name"),
+            ]
+
+        class AsyncItemAdmin(AsyncGrpcResourceAdmin):
+            resource_class = AsyncItemResource
+            service_name = "asyncitems"
+
+        adapter = AsyncItemAdapter()
+        reset_async_registry.register("asyncitems", adapter)
+
+        admin = AsyncItemAdmin(admin_site=AdminSite())
+        result = admin.fetch_list()
+        assert isinstance(result, PagedResult)
+        assert result.items[0].name == "A"
+
+    def test_delete_view_awaits_async_adapter(self, reset_async_registry):
+        deleted_pks: list[str] = []
+
+        class AsyncItemAdapter(BaseAsyncGrpcServiceAdapter):
+            service_name = "asyncitems"
+            target = "svc:50051"
+
+            async def list(self, resource_class, page=1, page_size=25, filters=None):
+                return PagedResult(items=[])
+
+            async def get(self, resource_class, pk):
+                return resource_class(id=pk, name="X")
+
+            async def delete(self, resource_class, pk):
+                deleted_pks.append(pk)
+                return True
+
+        class AsyncItemResource(BaseGrpcResource):
+            class Meta:
+                app_label = "shop"
+                model_name = "asyncitem"
+
+            fields = [
+                IntegerFieldConfig(name="id"),
+                CharFieldConfig(name="name"),
+            ]
+
+        class AsyncItemAdmin(AsyncGrpcResourceAdmin):
+            resource_class = AsyncItemResource
+            service_name = "asyncitems"
+            grpc_enable_delete = True
+
+        reset_async_registry.register("asyncitems", AsyncItemAdapter())
+
+        admin = AsyncItemAdmin(admin_site=AdminSite())
+        request = RequestFactory().post("/")
+        request.user = Mock()
+        request.user.is_staff = True
+        request.user.is_active = True
+
+        with (
+            patch("django.contrib.messages.success"),
+            patch("django_admin_grpc.admin.reverse", return_value="/admin/shop/asyncitem/"),
+        ):
+            response = admin.delete_view(request, "7")
+        assert response.status_code == 302
+        assert deleted_pks == ["7"]
+
+    def test_delete_selected_awaits_async_adapter(self, reset_async_registry):
+        deleted_pks: list[str] = []
+
+        class AsyncItemAdapter(BaseAsyncGrpcServiceAdapter):
+            service_name = "asyncitems"
+            target = "svc:50051"
+
+            async def list(self, resource_class, page=1, page_size=25, filters=None):
+                return PagedResult(items=[])
+
+            async def get(self, resource_class, pk):
+                return None
+
+            async def delete(self, resource_class, pk):
+                deleted_pks.append(pk)
+                return True
+
+        class AsyncItemResource(BaseGrpcResource):
+            class Meta:
+                app_label = "shop"
+                model_name = "asyncitem"
+
+            fields = [
+                IntegerFieldConfig(name="id"),
+                CharFieldConfig(name="name"),
+            ]
+
+        class AsyncItemAdmin(AsyncGrpcResourceAdmin):
+            resource_class = AsyncItemResource
+            service_name = "asyncitems"
+            grpc_enable_delete = True
+
+        reset_async_registry.register("asyncitems", AsyncItemAdapter())
+
+        admin = AsyncItemAdmin(admin_site=AdminSite())
+        request = RequestFactory().post("/")
+        qs = Mock()
+        qs._selected_pks = ["3", "4"]
+
+        with patch("django.contrib.messages.success"):
+            admin._grpc_delete_selected(request, qs)
+        assert sorted(deleted_pks) == ["3", "4"]
+
+    def test_repeated_sync_calls_reuse_async_adapter_channel(self, reset_async_registry):
+        """Regression: repeated sync admin calls must not crash on loop-bound channel."""
+        call_count = 0
+
+        class AsyncItemAdapter(BaseAsyncGrpcServiceAdapter):
+            service_name = "asyncitems"
+            target = "svc:50051"
+
+            async def list(self, resource_class, page=1, page_size=25, filters=None):
+                nonlocal call_count
+                call_count += 1
+                # Force channel creation on first call to expose loop binding.
+                await self.channel()
+                return PagedResult(items=[resource_class(id=call_count, name=f"A{call_count}")])
+
+            async def get(self, resource_class, pk):
+                return None
+
+        class AsyncItemResource(BaseGrpcResource):
+            class Meta:
+                app_label = "shop"
+                model_name = "asyncitem"
+
+            fields = [
+                IntegerFieldConfig(name="id"),
+                CharFieldConfig(name="name"),
+            ]
+
+        class AsyncItemAdmin(AsyncGrpcResourceAdmin):
+            resource_class = AsyncItemResource
+            service_name = "asyncitems"
+
+        adapter = AsyncItemAdapter()
+        reset_async_registry.register("asyncitems", adapter)
+
+        admin = AsyncItemAdmin(admin_site=AdminSite())
+        first = admin.fetch_list()
+        second = admin.fetch_list()
+
+        assert len(first.items) == 1
+        assert len(second.items) == 1
+        assert call_count == 2
+
+    def test_apply_grpc_bulk_update_awaits_async_adapter(self, reset_async_registry):
+        """Regression: bulk updates via @grpc_action must await async adapters."""
+        updated_pks: list[tuple[str, dict[str, Any]]] = []
+
+        class AsyncItemAdapter(BaseAsyncGrpcServiceAdapter):
+            service_name = "asyncitems"
+            target = "svc:50051"
+
+            async def list(self, resource_class, page=1, page_size=25, filters=None):
+                return PagedResult(items=[])
+
+            async def get(self, resource_class, pk):
+                return None
+
+            async def update(self, resource_class, pk, data):
+                updated_pks.append((pk, data))
+                return resource_class(id=pk, **data)
+
+        class AsyncItemResource(BaseGrpcResource):
+            class Meta:
+                app_label = "shop"
+                model_name = "asyncitem"
+
+            fields = [
+                IntegerFieldConfig(name="id"),
+                CharFieldConfig(name="name"),
+                BooleanFieldConfig(name="active"),
+            ]
+
+        class AsyncItemAdmin(AsyncGrpcResourceAdmin):
+            resource_class = AsyncItemResource
+            service_name = "asyncitems"
+            actions = ["activate_selected"]
+
+            @grpc_action(description="Activate selected")
+            def activate_selected(self, request, selected_pks):
+                return self.apply_grpc_bulk_update(request, selected_pks, {"active": True})
+
+        reset_async_registry.register("asyncitems", AsyncItemAdapter())
+
+        admin = AsyncItemAdmin(admin_site=AdminSite())
+        request = RequestFactory().post("/")
+        qs = Mock()
+        qs._selected_pks = ["5", "6"]
+
+        action_func = admin.get_actions(request)["activate_selected"][0]
+        updated, errors = action_func(admin, request, qs)
+
+        assert updated == 2
+        assert errors == 0
+        assert sorted(updated_pks) == [("5", {"active": True}), ("6", {"active": True})]
+
+    def test_async_only_fk_preload_uses_async_registry(self, reset_async_registry):
+        """Regression: FK labels must resolve when the related adapter is async-only."""
+
+        class OwnerResource(BaseGrpcResource):
+            class Meta:
+                app_label = "shop"
+                model_name = "owner"
+
+            fields = [
+                IntegerFieldConfig(name="id"),
+                CharFieldConfig(name="name"),
+            ]
+
+        class ItemResource(BaseGrpcResource):
+            class Meta:
+                app_label = "shop"
+                model_name = "item"
+
+            fields = [
+                IntegerFieldConfig(name="id"),
+                CharFieldConfig(name="title"),
+                FKFieldConfig(
+                    name="owner_id",
+                    service="owners",
+                    display_field="name",
+                    resource_class=OwnerResource,
+                ),
+            ]
+
+        class AsyncOwnerAdapter(BaseAsyncGrpcServiceAdapter):
+            service_name = "owners"
+            target = "svc:50051"
+
+            def __init__(self):
+                super().__init__()
+                self.batch_get_calls = 0
+                self.batch_get_ids: list[Any] = []
+
+            async def list(self, resource_class, page=1, page_size=25, filters=None):
+                return PagedResult(items=[], total=0)
+
+            async def get(self, resource_class, pk):
+                return None
+
+            async def batch_get(self, resource_class, pks):
+                self.batch_get_calls += 1
+                self.batch_get_ids.extend(pks)
+                return {pk: OwnerResource(id=pk, name=f"Owner-{pk}") for pk in pks}
+
+        class AsyncItemAdapter(BaseAsyncGrpcServiceAdapter):
+            service_name = "items"
+            target = "svc:50051"
+
+            def __init__(self):
+                super().__init__()
+                self._items = [
+                    ItemResource(id=1, title="A", owner_id=10),
+                    ItemResource(id=2, title="B", owner_id=20),
+                ]
+
+            async def list(self, resource_class, page=1, page_size=25, filters=None):
+                return PagedResult(items=self._items, total=len(self._items))
+
+            async def get(self, resource_class, pk):
+                return None
+
+        owner_adapter = AsyncOwnerAdapter()
+        item_adapter = AsyncItemAdapter()
+        reset_async_registry.register("owners", owner_adapter)
+        reset_async_registry.register("items", item_adapter)
+
+        class ItemAdmin(AsyncGrpcResourceAdmin):
+            resource_class = ItemResource
+            service_name = "items"
+
+        admin = ItemAdmin(admin_site=AdminSite())
+        request = RequestFactory().get("/")
+        cl = GrpcChangeList(
+            request=request,
+            model=admin.model,
+            list_display=["title", "owner_id"],
+            list_display_links=["title"],
+            list_filter=[],
+            date_hierarchy=None,
+            search_fields=[],
+            list_select_related=False,
+            list_per_page=25,
+            list_max_show_all=200,
+            list_editable=[],
+            model_admin=admin,
+            sortable_by=["title"],
+            search_help_text="",
+        )
+        cl.get_results(request)
+
+        assert owner_adapter.batch_get_calls == 1
+        assert sorted(owner_adapter.batch_get_ids) == [10, 20]
+        assert cl.result_list[0].owner_id == "Owner-10"
+        assert cl.result_list[1].owner_id == "Owner-20"
+
+    def test_async_only_fk_detail_resolve_uses_async_registry(self, reset_async_registry):
+        """Regression: detail FK labels must resolve when the related adapter is async-only."""
+
+        class OwnerResource(BaseGrpcResource):
+            class Meta:
+                app_label = "shop"
+                model_name = "owner"
+
+            fields = [
+                IntegerFieldConfig(name="id"),
+                CharFieldConfig(name="name"),
+            ]
+
+        class ItemResource(BaseGrpcResource):
+            class Meta:
+                app_label = "shop"
+                model_name = "item"
+
+            fields = [
+                IntegerFieldConfig(name="id"),
+                CharFieldConfig(name="title"),
+                FKFieldConfig(
+                    name="owner_id",
+                    service="owners",
+                    display_field="name",
+                    resource_class=OwnerResource,
+                ),
+            ]
+
+        class AsyncOwnerAdapter(BaseAsyncGrpcServiceAdapter):
+            service_name = "owners"
+            target = "svc:50051"
+
+            async def list(self, resource_class, page=1, page_size=25, filters=None):
+                return PagedResult(items=[], total=0)
+
+            async def get(self, resource_class, pk):
+                return OwnerResource(id=int(pk), name=f"Owner-{pk}")
+
+        reset_async_registry.register("owners", AsyncOwnerAdapter())
+
+        class ItemAdmin(AsyncGrpcResourceAdmin):
+            resource_class = ItemResource
+            adapter_class = MockAdapter
+
+        admin = ItemAdmin(admin_site=AdminSite())
+        config = ItemResource.get_field_config("owner_id")
+        result = admin.resolve_fk_value("owner_id", config, "7")
+        assert result == "Owner-7"

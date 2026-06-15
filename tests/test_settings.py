@@ -64,12 +64,26 @@ class TestGetSetting:
             result = get_setting("GRPC_ADMIN_DEFAULT_PAGE_SIZE")
             assert result == 100
 
-    def test_fallback_to_flat_setting_when_not_in_grpc_admin(self):
-        """If key not in GRPC_ADMIN dict, fall back to flat settings attr."""
+    def test_pool_defaults(self):
+        assert get_setting("GRPC_ADMIN_POOL_MIN_SIZE") == 2
+        assert get_setting("GRPC_ADMIN_POOL_MAX_SIZE") == 10
+        assert get_setting("GRPC_ADMIN_POOL_MAX_IDLE_SECONDS") == 300.0
+        assert get_setting("GRPC_ADMIN_POOL_HEALTH_CHECK_INTERVAL") == 30.0
+        assert get_setting("GRPC_ADMIN_POOL_HEALTH_CHECK_TIMEOUT") == 2.0
+
+    def test_pool_settings_can_be_overridden(self):
         with patch(
             "django_admin_grpc.settings.settings",
-            GRPC_ADMIN={"DEFAULT_WIDGETS": {"name": "TextInput"}},
-            GRPC_ADMIN_DEFAULT_PAGE_SIZE=75,
+            GRPC_ADMIN={
+                "POOL_MIN_SIZE": 1,
+                "POOL_MAX_SIZE": 5,
+                "POOL_MAX_IDLE_SECONDS": 60.0,
+                "POOL_HEALTH_CHECK_INTERVAL": 10.0,
+                "POOL_HEALTH_CHECK_TIMEOUT": 1.0,
+            },
         ):
-            result = get_setting("GRPC_ADMIN_DEFAULT_PAGE_SIZE")
-            assert result == 75
+            assert get_setting("GRPC_ADMIN_POOL_MIN_SIZE") == 1
+            assert get_setting("GRPC_ADMIN_POOL_MAX_SIZE") == 5
+            assert get_setting("GRPC_ADMIN_POOL_MAX_IDLE_SECONDS") == 60.0
+            assert get_setting("GRPC_ADMIN_POOL_HEALTH_CHECK_INTERVAL") == 10.0
+            assert get_setting("GRPC_ADMIN_POOL_HEALTH_CHECK_TIMEOUT") == 1.0

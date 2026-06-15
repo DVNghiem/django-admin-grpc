@@ -409,6 +409,75 @@ You can also catch the typed exceptions in custom admin methods if you need spec
 
 ---
 
+## Channel Pooling
+
+For services called from many admin views, create a shared `GrpcChannelPool` and attach it to the adapter.  The pool keeps channels ready, recycles them, and runs background health checks.
+
+```python
+from django_admin_grpc import GrpcChannelPool
+from django_admin_grpc.adapters import BaseGrpcServiceAdapter
+
+class CatalogAdapter(BaseGrpcServiceAdapter):
+    service_name = "catalog"
+
+    def __init__(self):
+        self.grpc_pool = GrpcChannelPool("dns:///catalog-service:50051")
+
+    def list(self, resource_class, page=1, page_size=25, filters=None):
+        with self.get_channel() as channel:
+            stub = CatalogStub(channel)
+            ...
+```
+
+`GrpcChannelPool` reads defaults from Django settings:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `GRPC_ADMIN_POOL_MIN_SIZE` | `2` | Minimum idle channels to keep ready. |
+| `GRPC_ADMIN_POOL_MAX_SIZE` | `10` | Maximum channels open at once. |
+| `GRPC_ADMIN_POOL_MAX_IDLE_SECONDS` | `300.0` | Evict idle channels after this many seconds. |
+| `GRPC_ADMIN_POOL_HEALTH_CHECK_INTERVAL` | `30.0` | Seconds between background health passes. |
+| `GRPC_ADMIN_POOL_HEALTH_CHECK_TIMEOUT` | `2.0` | Timeout for `channel_ready()` health probes. |
+
+Call `pool.metrics()` for a snapshot of `pool_size`, `idle`, `in_use`, and `evicted_total`.
+
+## Async Adapters
+
+Use `BaseAsyncGrpcServiceAdapter` and `AsyncAdapterRegistry` with `grpc.aio`:
+
+```python
+from django_admin_grpc import BaseAsyncGrpcServiceAdapter, AsyncAdapterRegistry
+import grpc.aio
+
+class CatalogAsyncAdapter(BaseAsyncGrpcServiceAdapter):
+    service_name = "catalog"
+    target = "dns:///catalog-service:50051"
+
+    async def list(self, resource_class, page=1, page_size=25, filters=None):
+        channel = await self.channel()
+        stub = CatalogStub(channel)
+        ...
+
+    async def get(self, resource_class, pk):
+        ...
+
+async_registry = AsyncAdapterRegistry()
+async_registry.register("catalog", CatalogAsyncAdapter())
+```
+
+In the admin, subclass `AsyncGrpcResourceAdmin`.  It detects async adapters and automatically bridges async `list`/`get`/`create`/`update` calls into Django's synchronous request/response cycle.  For ASGI deployments you can route the changelist to `async_changelist_view`.
+
+```python
+from django_admin_grpc import AsyncGrpcResourceAdmin
+
+@admin.register(Product.admin_model())
+class ProductAdmin(AsyncGrpcResourceAdmin):
+    resource_class = Product
+    service_name = "catalog"
+```
+
+---
+
 ## Customizing Appearance
 
 ### Custom Widgets

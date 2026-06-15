@@ -8,6 +8,7 @@ import pytest
 
 from django_admin_grpc.adapters import BaseGrpcServiceAdapter
 from django_admin_grpc.paginator import PagedResult
+from django_admin_grpc.pool import GrpcChannelPool
 
 
 class MinimalAdapter(BaseGrpcServiceAdapter):
@@ -221,3 +222,33 @@ class TestBaseGrpcServiceAdapterHelpers:
 
 def dummy_provider():
     return {}
+
+
+class TestBaseGrpcServiceAdapterChannel:
+    def test_get_channel_yields_self_channel_without_pool(self):
+        class ChannelAdapter(MinimalAdapter):
+            def __init__(self):
+                super().__init__()
+                self._mock_channel = Mock(spec=grpc.Channel)
+
+            @property
+            def channel(self):
+                return self._mock_channel
+
+        adapter = ChannelAdapter()
+        with adapter.get_channel() as channel:
+            assert channel is adapter.channel
+
+    def test_get_channel_borrows_from_pool(self):
+        pool_channel = Mock(spec=grpc.Channel)
+        pool = Mock(spec=GrpcChannelPool)
+        pool.get_channel.return_value.__enter__ = Mock(return_value=pool_channel)
+        pool.get_channel.return_value.__exit__ = Mock(return_value=False)
+
+        adapter = MinimalAdapter()
+        adapter.grpc_pool = pool
+
+        with adapter.get_channel() as channel:
+            assert channel is pool_channel
+
+        pool.get_channel.assert_called_once()

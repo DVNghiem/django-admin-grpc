@@ -76,13 +76,21 @@ class AdapterRegistry:
             self._frozen = True
 
     def close_all(self) -> None:
-        """Close every registered adapter's channel."""
+        """Close every registered adapter's channel and any attached pool."""
         if self._frozen:
             adapters = list(self._adapters.values())
         else:
             with self._lock:
                 adapters = list(self._adapters.values())
         for adapter in adapters:
+            pool = getattr(adapter, "grpc_pool", None)
+            if pool is not None:
+                try:
+                    pool.close_all()
+                except Exception:
+                    logger.exception(
+                        "Error closing gRPC pool for service: %s", adapter.service_name
+                    )
             try:
                 adapter.close()
             except Exception:
