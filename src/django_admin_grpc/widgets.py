@@ -4,6 +4,7 @@ Default widget mappings for stock Django admin.
 Override these at the project level by passing a ``widgets`` dict to
 ``resource.build_form_class(widgets={...})``.
 """
+
 from django import forms
 
 DEFAULT_WIDGETS: dict[str, type[forms.Widget]] = {

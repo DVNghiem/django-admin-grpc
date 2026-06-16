@@ -4,6 +4,7 @@ In-memory gRPC adapters for the Catalog example.
 These adapters simulate a real gRPC service using simple Python dicts so the
 example runs without any external server.
 """
+
 from __future__ import annotations
 
 import logging
@@ -174,9 +175,7 @@ class CatalogGrpcAdapter(BaseGrpcServiceAdapter):
         search = filters.get("search", "").lower()
         if search:
             items = [
-                item
-                for item in items
-                if any(search in str(item.get(k, "")).lower() for k in item)
+                item for item in items if any(search in str(item.get(k, "")).lower() for k in item)
             ]
 
         for key, value in filters.items():
@@ -254,15 +253,11 @@ class CatalogGrpcAdapter(BaseGrpcServiceAdapter):
         store[pk] = record
         return resource_class(**record)
 
-    def update(
-        self, resource_class: type[Any], pk: str, data: dict[str, Any]
-    ) -> Any:
+    def update(self, resource_class: type[Any], pk: str, data: dict[str, Any]) -> Any:
         store = self._get_store(resource_class)
         record = store.get(str(pk))
         if record is None:
-            raise RuntimeError(
-                f"{resource_class.__name__} with id={pk} not found"
-            )
+            raise RuntimeError(f"{resource_class.__name__} with id={pk} not found")
         record.update({k: v for k, v in data.items() if v is not None})
         return resource_class(**record)
 

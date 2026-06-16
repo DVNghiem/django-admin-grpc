@@ -4,18 +4,20 @@ Base gRPC service adapter interface.
 Concrete adapters subclass ``BaseGrpcServiceAdapter`` and implement ``list()``,
 ``get()`` and optionally ``create()``, ``update()``, ``delete()``.
 """
+
 from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, cast
 
 import grpc
 
-from django_admin_grpc.exceptions import map_grpc_error
+from django_admin_grpc.exceptions import GrpcBatchPartialError, map_grpc_error
 from django_admin_grpc.paginator import PagedResult
+from django_admin_grpc.utils import chunked
 
 if TYPE_CHECKING:
     from django_admin_grpc.pool import GrpcChannelPool
@@ -33,10 +35,13 @@ class BaseGrpcServiceAdapter(ABC):
         grpc_pool: Optional ``GrpcChannelPool`` used to acquire channels. When
             set, ``get_channel`` borrows channels from the pool instead of using
             the legacy ``self.channel`` property.
+        batch_size: Default chunk size used by fallback ``bulk_*`` methods
+            when callers do not specify a size. Defaults to ``100``.
     """
 
     service_name: str = ""
     grpc_pool: GrpcChannelPool | None = None
+    batch_size: int = 100
 
     @contextmanager
     def get_channel(self) -> Any:
@@ -127,9 +132,7 @@ class BaseGrpcServiceAdapter(ABC):
         data: dict[str, Any],
     ) -> BaseGrpcResource:
         """Create a new entity via gRPC."""
-        raise NotImplementedError(
-            f"{self.__class__.__name__} does not support create"
-        )
+        raise NotImplementedError(f"{self.__class__.__name__} does not support create")
 
     def update(
         self,
@@ -138,9 +141,7 @@ class BaseGrpcServiceAdapter(ABC):
         data: dict[str, Any],
     ) -> BaseGrpcResource:
         """Update an existing entity via gRPC."""
-        raise NotImplementedError(
-            f"{self.__class__.__name__} does not support update"
-        )
+        raise NotImplementedError(f"{self.__class__.__name__} does not support update")
 
     def delete(
         self,
@@ -148,9 +149,213 @@ class BaseGrpcServiceAdapter(ABC):
         pk: str,
     ) -> bool:
         """Delete an entity via gRPC."""
-        raise NotImplementedError(
-            f"{self.__class__.__name__} does not support delete"
-        )
+        raise NotImplementedError(f"{self.__class__.__name__} does not support delete")
+
+    # ── Bulk operations (chunked fallback) ────────────────────────────────
+
+    def bulk_create(
+        self,
+        resource_class: type[BaseGrpcResource],
+        items: list[dict[str, Any]],  # type: ignore[valid-type]
+        *,
+        batch_size: int | None = None,
+    ) -> list[BaseGrpcResource]:  # type: ignore[valid-type]
+        """
+        Create multiple entities via gRPC, chunked.
+
+        The default implementation iterates the configured ``create()`` method
+        in chunks of ``batch_size`` (defaulting to ``self.batch_size``).
+        Adapters that expose a true bulk create endpoint should override this.
+
+        On partial failure the method raises
+        :class:`GrpcBatchPartialError` so the caller can react to the failed
+        subset. Each failed item is mapped to the underlying exception.
+
+        Args:
+            resource_class: Resource class to instantiate for created items.
+            items: List of dictionaries, one per entity to create.
+            batch_size: Optional chunk size override.
+
+        Returns:
+            A list of created resources (one per successfully created item,
+            in chunk-then-item order).
+        """
+        if not items:
+            return []
+        size = batch_size if batch_size is not None else self.batch_size
+        created: list[BaseGrpcResource] = []
+        succeeded_inputs: list[dict[str, Any]] = []
+        failed: dict[int, Exception] = {}
+        # Resource name is included in logs so multiple resources can be
+        # disambiguated, but the raw input payload is intentionally not
+        # logged — it may contain sensitive fields.
+        resource_name = getattr(resource_class, "__name__", str(resource_class))
+        chunk: Sequence[dict[str, Any]]
+        for chunk in chunked(items, size):
+            data: dict[str, Any]
+            for data in chunk:
+                # Stable key: the index of the input across all chunks.
+                index = len(succeeded_inputs) + len(failed)
+                try:
+                    created.append(self.create(resource_class, data))
+                    succeeded_inputs.append(data)
+                except Exception as exc:
+                    failed[index] = exc
+                    logger.warning(
+                        "gRPC bulk_create failed for resource=%s index=%s: %s",
+                        resource_name,
+                        index,
+                        exc,
+                    )
+        if failed:
+            raise GrpcBatchPartialError(
+                "Bulk create completed with failures",
+                succeeded=succeeded_inputs,
+                failed=failed,
+                operation="bulk_create",
+            )
+        return created
+
+    def bulk_update(
+        self,
+        resource_class: type[BaseGrpcResource],
+        items: list[dict[str, Any]],  # type: ignore[valid-type]
+        *,
+        batch_size: int | None = None,
+    ) -> list[BaseGrpcResource]:  # type: ignore[valid-type]
+        """
+        Update multiple entities via gRPC, chunked.
+
+        Each *item* must include the primary key field.  The PK name is
+        discovered from the resource ``Meta.pk_field`` (defaulting to
+        ``"id"``).  The default implementation calls ``update()`` per item in
+        chunks; concrete adapters can override when a true bulk update exists.
+
+        On partial failure the method raises
+        :class:`GrpcBatchPartialError` with the failed PKs and their
+        exceptions.
+
+        Args:
+            resource_class: Resource class describing the entity shape.
+            items: List of dictionaries, each including the PK field plus
+                the fields to update.
+            batch_size: Optional chunk size override.
+
+        Returns:
+            A list of updated resources (one per successful update, in
+            chunk-then-item order).
+        """
+        if not items:
+            return []
+        size = batch_size if batch_size is not None else self.batch_size
+        pk_field = self._get_pk_field_name(resource_class)
+        updated: list[BaseGrpcResource] = []
+        succeeded_pks: list[Any] = []
+        failed: dict[Any, Exception] = {}
+        # Resource name is included in logs so multiple resources can be
+        # disambiguated, but the raw input payload is intentionally not
+        # logged — it may contain sensitive fields.
+        resource_name = getattr(resource_class, "__name__", str(resource_class))
+        chunk: Sequence[dict[str, Any]]
+        for chunk in chunked(items, size):
+            data: dict[str, Any]
+            for data in chunk:
+                pk: Any = data.get(pk_field)
+                if pk is None:
+                    exc = ValueError(f"bulk_update item missing primary key field '{pk_field}'")
+                    failed[pk] = exc
+                    logger.warning(
+                        "gRPC bulk_update item missing pk for resource=%s pk_field=%s",
+                        resource_name,
+                        pk_field,
+                    )
+                    continue
+                try:
+                    updated.append(self.update(resource_class, str(pk), data))
+                    succeeded_pks.append(pk)
+                except Exception as exc:
+                    failed[pk] = exc
+                    logger.warning(
+                        "gRPC bulk_update failed for resource=%s pk=%s: %s",
+                        resource_name,
+                        pk,
+                        exc,
+                    )
+        if failed:
+            raise GrpcBatchPartialError(
+                "Bulk update completed with failures",
+                succeeded=succeeded_pks,
+                failed=failed,
+                operation="bulk_update",
+            )
+        return updated
+
+    def bulk_delete(
+        self,
+        resource_class: type[BaseGrpcResource],
+        pks: list[Any],  # type: ignore[valid-type]
+        *,
+        batch_size: int | None = None,
+    ) -> dict[str, Any]:
+        """
+        Delete multiple entities by primary key, chunked.
+
+        The default implementation calls ``delete()`` per PK in chunks. On
+        partial failure, raises :class:`GrpcBatchPartialError` and includes
+        the succeeded and failed PKs. On full success, returns a summary
+        mapping of the form ``{"deleted": int, "failed": list[Any]}`` where
+        ``failed`` is an empty list.
+
+        Args:
+            resource_class: Resource class describing the entity shape.
+            pks: List of primary key values to delete.
+            batch_size: Optional chunk size override.
+
+        Returns:
+            ``{"deleted": <int>, "failed": [<pk>, ...]}`` on full success.
+
+        Raises:
+            GrpcBatchPartialError: When one or more deletes fail.
+        """
+        if not pks:
+            return {"deleted": 0, "failed": []}
+        size = batch_size if batch_size is not None else self.batch_size
+        succeeded_pks: list[Any] = []
+        failed: dict[Any, Exception] = {}
+        # Resource name is included in logs so multiple resources can be
+        # disambiguated.  ``bulk_delete`` only logs the PK (not a payload),
+        # but the resource name is kept consistent with bulk_create / update.
+        resource_name = getattr(resource_class, "__name__", str(resource_class))
+        chunk: Sequence[Any]
+        for chunk in chunked(pks, size):
+            pk: Any
+            for pk in chunk:
+                try:
+                    self.delete(resource_class, str(pk))
+                    succeeded_pks.append(pk)
+                except Exception as exc:
+                    failed[pk] = exc
+                    logger.warning(
+                        "gRPC bulk_delete failed for resource=%s pk=%s: %s",
+                        resource_name,
+                        pk,
+                        exc,
+                    )
+        if failed:
+            raise GrpcBatchPartialError(
+                "Bulk delete completed with failures",
+                succeeded=succeeded_pks,
+                failed=failed,
+                operation="bulk_delete",
+            )
+        return {"deleted": len(succeeded_pks), "failed": []}
+
+    @staticmethod
+    def _get_pk_field_name(
+        resource_class: type[BaseGrpcResource],
+    ) -> str:
+        """Return the primary key field name for *resource_class*."""
+        return getattr(resource_class.Meta, "pk_field", "id") or "id"
 
     @property
     def supports_create(self) -> bool:

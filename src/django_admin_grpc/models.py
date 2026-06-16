@@ -1,6 +1,7 @@
 """
 Fake Django model infrastructure so that ``ModelAdmin`` can work without ORM tables.
 """
+
 from __future__ import annotations
 
 import logging
@@ -116,9 +117,7 @@ class FakeModelMeta:
 
         field_names = self.resource_class.get_field_names()
         if name not in field_names and name not in (self._pk_field_name, "pk", "id"):
-            raise FieldDoesNotExist(
-                f"{self.model_name} has no field named '{name}'"
-            )
+            raise FieldDoesNotExist(f"{self.model_name} has no field named '{name}'")
 
         config = self.resource_class.get_field_config(name)
         field_obj = self._build_field(name, config)

@@ -1,6 +1,7 @@
 """
 Pytest fixtures and configuration for django-admin-grpc tests.
 """
+
 import django
 import pytest
 from django.conf import settings

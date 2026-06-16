@@ -1,6 +1,7 @@
 """
 Tests for django_admin_grpc.exceptions module.
 """
+
 from unittest.mock import Mock
 
 import grpc
@@ -9,6 +10,7 @@ from django_admin_grpc.exceptions import (
     GrpcAbortedError,
     GrpcAdminError,
     GrpcAlreadyExistsError,
+    GrpcBatchPartialError,
     GrpcCancelledError,
     GrpcDeadlineExceededError,
     GrpcFailedPreconditionError,
@@ -152,6 +154,7 @@ class TestMapGrpcError:
         class NoDetailsError(grpc.RpcError):
             def code(self):
                 return grpc.StatusCode.INTERNAL
+
             # No details() method
 
         exc = NoDetailsError()
@@ -235,3 +238,41 @@ class TestGetGrpcErrorMessage:
         level, message = get_grpc_error_message(exc)
         assert level == 40
         assert message == "boom"
+
+
+class TestGrpcBatchPartialError:
+    def test_basic(self):
+        exc = GrpcBatchPartialError(
+            "partial failure",
+            succeeded=[1, 2, 3],
+            failed={4: RuntimeError("boom"), 5: RuntimeError("nope")},
+            operation="bulk_delete",
+        )
+        assert isinstance(exc, GrpcAdminError)
+        assert exc.message == "partial failure"
+        assert exc.succeeded == [1, 2, 3]
+        assert set(exc.failed.keys()) == {4, 5}
+        assert exc.operation == "bulk_delete"
+        assert exc.code == "BATCH_PARTIAL"
+
+    def test_str_includes_operation_and_counts(self):
+        exc = GrpcBatchPartialError(
+            "boom", succeeded=[1, 2], failed={3: RuntimeError("x")}, operation="bulk_update"
+        )
+        text = str(exc)
+        assert "operation=bulk_update" in text
+        assert "succeeded=2" in text
+        assert "failed=1" in text
+
+    def test_defaults(self):
+        exc = GrpcBatchPartialError("nothing failed")
+        assert exc.succeeded == []
+        assert exc.failed == {}
+        assert exc.operation is None
+
+    def test_accepts_list_for_failed(self):
+        exc = GrpcBatchPartialError("x", succeeded=[1], failed=["a", "b"], operation="bulk_create")
+        assert exc.failed == ["a", "b"]
+
+    def test_inherits_from_grpc_admin_error(self):
+        assert issubclass(GrpcBatchPartialError, GrpcAdminError)

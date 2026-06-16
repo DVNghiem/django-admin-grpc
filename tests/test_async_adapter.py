@@ -1,7 +1,9 @@
 """
 Tests for django_admin_grpc.async_adapter module.
 """
+
 import asyncio
+from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import grpc
@@ -13,7 +15,13 @@ from django_admin_grpc.async_adapter import (
     async_adapter_registry,
     ensure_aio_initialized,
 )
+from django_admin_grpc.exceptions import GrpcBatchPartialError
 from django_admin_grpc.paginator import PagedResult
+from django_admin_grpc.resources import (
+    BaseGrpcResource,
+    CharFieldConfig,
+    IntegerFieldConfig,
+)
 
 
 class MinimalAsyncAdapter(BaseAsyncGrpcServiceAdapter):
@@ -69,8 +77,9 @@ class TestEnsureAioInitialized:
         init = Mock(side_effect=RuntimeError("boom"))
 
         async def _call():
-            with patch.object(grpc.aio, "init_grpc_aio", init), pytest.raises(
-                RuntimeError, match="boom"
+            with (
+                patch.object(grpc.aio, "init_grpc_aio", init),
+                pytest.raises(RuntimeError, match="boom"),
             ):
                 ensure_aio_initialized()
 
@@ -134,7 +143,9 @@ class TestBaseAsyncGrpcServiceAdapter:
     async def test_channel_created_lazily_insecure(self):
         adapter = MinimalAsyncAdapter()
         mock_channel = AsyncMock(spec=grpc.aio.Channel)
-        with patch("django_admin_grpc.async_adapter.grpc.aio.insecure_channel", return_value=mock_channel):
+        with patch(
+            "django_admin_grpc.async_adapter.grpc.aio.insecure_channel", return_value=mock_channel
+        ):
             channel = await adapter.channel()
             assert channel is mock_channel
 
@@ -144,14 +155,18 @@ class TestBaseAsyncGrpcServiceAdapter:
 
         adapter = SecureAdapter()
         mock_channel = AsyncMock(spec=grpc.aio.Channel)
-        with patch("django_admin_grpc.async_adapter.grpc.aio.secure_channel", return_value=mock_channel):
+        with patch(
+            "django_admin_grpc.async_adapter.grpc.aio.secure_channel", return_value=mock_channel
+        ):
             channel = await adapter.channel()
             assert channel is mock_channel
 
     async def test_channel_is_cached(self):
         adapter = MinimalAsyncAdapter()
         mock_channel = AsyncMock(spec=grpc.aio.Channel)
-        with patch("django_admin_grpc.async_adapter.grpc.aio.insecure_channel", return_value=mock_channel):
+        with patch(
+            "django_admin_grpc.async_adapter.grpc.aio.insecure_channel", return_value=mock_channel
+        ):
             ch1 = await adapter.channel()
             ch2 = await adapter.channel()
             assert ch1 is ch2 is mock_channel
@@ -252,3 +267,268 @@ class TestAsyncAdapterRegistry:
 
     def test_module_singleton(self):
         assert isinstance(async_adapter_registry, AsyncAdapterRegistry)
+
+
+# ── Bulk operation tests (async) ─────────────────────────────────────────
+
+
+class AsyncBulkResource(BaseGrpcResource):
+    class Meta:
+        app_label = "shop"
+        model_name = "asyncbulkitem"
+        pk_field = "id"
+
+    fields = [
+        IntegerFieldConfig(name="id"),
+        CharFieldConfig(name="name"),
+    ]
+
+
+class CountingAsyncAdapter(BaseAsyncGrpcServiceAdapter):
+    """Async adapter that records every create/update/delete call."""
+
+    service_name = "async_counting"
+    target = "svc:50051"
+
+    def __init__(self):
+        self.created: list[dict] = []
+        self.updated: list[tuple[str, dict]] = []
+        self.deleted: list[str] = []
+        self._raise_on_create: set[int] = set()
+        self._raise_on_update: set[Any] = set()
+        self._raise_on_delete: set[Any] = set()
+
+    async def list(self, resource_class, page=1, page_size=25, filters=None):
+        return PagedResult(items=[])
+
+    async def get(self, resource_class, pk):
+        return None
+
+    async def create(self, resource_class, data):
+        self.created.append(data)
+        if id(data) in self._raise_on_create:
+            raise RuntimeError("create failed")
+        return resource_class(**data)
+
+    async def update(self, resource_class, pk, data):
+        self.updated.append((pk, data))
+        if pk in self._raise_on_update:
+            raise RuntimeError("update failed")
+        return resource_class(**data)
+
+    async def delete(self, resource_class, pk):
+        self.deleted.append(pk)
+        if pk in self._raise_on_delete:
+            raise RuntimeError("delete failed")
+        return True
+
+
+@pytest.mark.asyncio
+class TestAsyncBulkCreate:
+    async def test_empty_input_returns_empty(self):
+        adapter = CountingAsyncAdapter()
+        assert await adapter.bulk_create(AsyncBulkResource, []) == []
+
+    async def test_creates_all(self):
+        adapter = CountingAsyncAdapter()
+        items = [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}]
+        result = await adapter.bulk_create(AsyncBulkResource, items)
+        assert len(result) == 2
+        assert [r.id for r in result] == [1, 2]
+        assert adapter.created == items
+
+    async def test_chunks_input(self):
+        adapter = CountingAsyncAdapter()
+        adapter.batch_size = 2
+        items = [{"id": i, "name": f"n{i}"} for i in range(5)]
+        result = await adapter.bulk_create(AsyncBulkResource, items)
+        assert len(result) == 5
+        assert len(adapter.created) == 5
+
+    async def test_partial_failure_raises_partial_error(self):
+        adapter = CountingAsyncAdapter()
+        items = [{"id": i, "name": f"n{i}"} for i in range(3)]
+        # Mark the second item to fail.
+        adapter._raise_on_create.add(id(items[1]))
+        with pytest.raises(GrpcBatchPartialError) as info:
+            await adapter.bulk_create(AsyncBulkResource, items)
+        exc = info.value
+        assert exc.operation == "bulk_create"
+        assert len(exc.succeeded) == 2
+        assert len(exc.failed) == 1
+
+    async def test_batch_size_override(self):
+        adapter = CountingAsyncAdapter()
+        items = [{"id": i, "name": f"n{i}"} for i in range(6)]
+        result = await adapter.bulk_create(AsyncBulkResource, items, batch_size=2)
+        assert len(result) == 6
+
+    async def test_partial_failure_log_excludes_payload(self, caplog):
+        """The warning log for async bulk_create partial failures must not
+        include the raw input payload."""
+        import logging
+
+        adapter = CountingAsyncAdapter()
+        items = [
+            {"id": 1, "name": "secret-1", "token": "TOPSECRET"},
+            {"id": 2, "name": "secret-2", "token": "TOPSECRET"},
+        ]
+        adapter._raise_on_create.add(id(items[0]))
+        with (
+            caplog.at_level(logging.WARNING, logger="django_admin_grpc.async_adapter"),
+            pytest.raises(GrpcBatchPartialError),
+        ):
+            await adapter.bulk_create(AsyncBulkResource, items)
+        joined = "\n".join(record.getMessage() for record in caplog.records)
+        assert "TOPSECRET" not in joined
+        assert "secret-1" not in joined
+        assert "secret-2" not in joined
+
+
+@pytest.mark.asyncio
+class TestAsyncBulkUpdate:
+    async def test_empty_input_returns_empty(self):
+        adapter = CountingAsyncAdapter()
+        assert await adapter.bulk_update(AsyncBulkResource, []) == []
+
+    async def test_updates_all(self):
+        adapter = CountingAsyncAdapter()
+        items = [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}]
+        result = await adapter.bulk_update(AsyncBulkResource, items)
+        assert len(result) == 2
+        assert adapter.updated == [("1", items[0]), ("2", items[1])]
+
+    async def test_chunks_input(self):
+        adapter = CountingAsyncAdapter()
+        adapter.batch_size = 2
+        items = [{"id": i, "name": f"n{i}"} for i in range(5)]
+        result = await adapter.bulk_update(AsyncBulkResource, items)
+        assert len(result) == 5
+        assert len(adapter.updated) == 5
+
+    async def test_missing_pk_recorded_as_failure(self):
+        adapter = CountingAsyncAdapter()
+        items = [{"id": 1, "name": "a"}, {"name": "b"}, {"id": 3, "name": "c"}]
+        with pytest.raises(GrpcBatchPartialError) as info:
+            await adapter.bulk_update(AsyncBulkResource, items)
+        exc = info.value
+        assert exc.operation == "bulk_update"
+        assert sorted(exc.succeeded) == [1, 3]
+        # The missing-pk item is recorded as a failure with a ``ValueError``.
+        assert None in exc.failed
+        assert isinstance(exc.failed[None], ValueError)
+
+    async def test_partial_failure_raises_partial_error(self):
+        adapter = CountingAsyncAdapter()
+        items = [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}]
+        adapter._raise_on_update.add("2")
+        with pytest.raises(GrpcBatchPartialError) as info:
+            await adapter.bulk_update(AsyncBulkResource, items)
+        exc = info.value
+        assert exc.operation == "bulk_update"
+        assert exc.succeeded == [1]
+        # Pk keys in the failed dict mirror what the caller passed.
+        assert 2 in exc.failed
+        assert isinstance(exc.failed[2], RuntimeError)
+
+    async def test_respects_custom_pk_field(self):
+        class CustomPkResource(BaseGrpcResource):
+            class Meta:
+                app_label = "shop"
+                model_name = "async_custompk"
+                pk_field = "rule_id"
+
+            fields = [
+                CharFieldConfig(name="rule_id"),
+                CharFieldConfig(name="value"),
+            ]
+
+        adapter = CountingAsyncAdapter()
+        items = [{"rule_id": "r1", "value": "x"}]
+        result = await adapter.bulk_update(CustomPkResource, items)
+        assert result[0].rule_id == "r1"
+        assert adapter.updated == [("r1", items[0])]
+
+    async def test_batch_size_override(self):
+        adapter = CountingAsyncAdapter()
+        items = [{"id": i, "name": f"n{i}"} for i in range(6)]
+        result = await adapter.bulk_update(AsyncBulkResource, items, batch_size=2)
+        assert len(result) == 6
+
+    async def test_missing_pk_log_excludes_payload(self, caplog):
+        """The warning log for async bulk_update missing-pk items must not
+        include the raw input payload."""
+        import logging
+
+        adapter = CountingAsyncAdapter()
+        items = [
+            {"id": 1, "name": "secret-1", "token": "TOPSECRET"},
+            {"name": "no-pk", "token": "TOPSECRET"},
+        ]
+        with (
+            caplog.at_level(logging.WARNING, logger="django_admin_grpc.async_adapter"),
+            pytest.raises(GrpcBatchPartialError),
+        ):
+            await adapter.bulk_update(AsyncBulkResource, items)
+        joined = "\n".join(record.getMessage() for record in caplog.records)
+        assert "TOPSECRET" not in joined
+        assert "secret-1" not in joined
+        assert "no-pk" not in joined
+
+    async def test_partial_failure_log_excludes_payload(self, caplog):
+        """The warning log for async bulk_update partial failures must not
+        include the raw input payload."""
+        import logging
+
+        adapter = CountingAsyncAdapter()
+        items = [
+            {"id": 1, "name": "ok-1", "token": "TOPSECRET"},
+            {"id": 2, "name": "fail-2", "token": "TOPSECRET"},
+        ]
+        adapter._raise_on_update.add("2")
+        with (
+            caplog.at_level(logging.WARNING, logger="django_admin_grpc.async_adapter"),
+            pytest.raises(GrpcBatchPartialError),
+        ):
+            await adapter.bulk_update(AsyncBulkResource, items)
+        joined = "\n".join(record.getMessage() for record in caplog.records)
+        assert "TOPSECRET" not in joined
+        assert "ok-1" not in joined
+        assert "fail-2" not in joined
+
+
+@pytest.mark.asyncio
+class TestAsyncBulkDelete:
+    async def test_empty_input_returns_empty(self):
+        adapter = CountingAsyncAdapter()
+        result = await adapter.bulk_delete(AsyncBulkResource, [])
+        assert result == {"deleted": 0, "failed": []}
+
+    async def test_deletes_all(self):
+        adapter = CountingAsyncAdapter()
+        result = await adapter.bulk_delete(AsyncBulkResource, ["1", "2", "3"])
+        assert result == {"deleted": 3, "failed": []}
+        assert adapter.deleted == ["1", "2", "3"]
+
+    async def test_chunks_input(self):
+        adapter = CountingAsyncAdapter()
+        adapter.batch_size = 2
+        result = await adapter.bulk_delete(AsyncBulkResource, ["1", "2", "3", "4", "5"])
+        assert result == {"deleted": 5, "failed": []}
+
+    async def test_partial_failure_raises_partial_error(self):
+        adapter = CountingAsyncAdapter()
+        adapter._raise_on_delete.add("2")
+        with pytest.raises(GrpcBatchPartialError) as info:
+            await adapter.bulk_delete(AsyncBulkResource, ["1", "2", "3"])
+        exc = info.value
+        assert exc.operation == "bulk_delete"
+        assert exc.succeeded == ["1", "3"]
+        assert "2" in exc.failed
+        assert isinstance(exc.failed["2"], RuntimeError)
+
+    async def test_batch_size_override(self):
+        adapter = CountingAsyncAdapter()
+        result = await adapter.bulk_delete(AsyncBulkResource, ["1", "2", "3"], batch_size=1)
+        assert result == {"deleted": 3, "failed": []}
+        assert adapter.deleted == ["1", "2", "3"]

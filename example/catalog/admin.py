@@ -4,6 +4,7 @@ Catalog admin registration for the django-admin-grpc example.
 Demonstrates how a consumer project wires resources into Django Admin
 using GrpcResourceAdmin.
 """
+
 from django import forms
 from django.contrib import admin, messages
 
@@ -127,9 +128,7 @@ class ProductAdmin(GrpcResourceAdmin):
 
     @grpc_action(description="Activate selected products")
     def bulk_activate(self, request, selected_pks):
-        updated, errors = self.apply_grpc_bulk_update(
-            request, selected_pks, {"active": True}
-        )
+        updated, errors = self.apply_grpc_bulk_update(request, selected_pks, {"active": True})
         if updated:
             messages.success(request, f"Activated {updated} product(s).")
         if errors:

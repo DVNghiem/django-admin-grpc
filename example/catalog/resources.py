@@ -4,6 +4,7 @@ Catalog resources for the django-admin-grpc example.
 Demonstrates how a consumer project defines remote entities using
 BaseGrpcResource and field config classes.
 """
+
 from django_admin_grpc.resources import (
     BaseGrpcResource,
     BooleanFieldConfig,
@@ -58,12 +59,8 @@ class ProductResource(BaseGrpcResource):
         CharFieldConfig(name="sku", label="SKU", max_length=50, editable=False),
         CharFieldConfig(name="name", label="Name", max_length=200),
         TextFieldConfig(name="description", label="Description", required=False),
-        TextFieldConfig(
-            name="notes", label="Internal Notes", required=False, detail_only=True
-        ),
-        CharFieldConfig(
-            name="badge", label="Badge", max_length=50, required=False, list_only=True
-        ),
+        TextFieldConfig(name="notes", label="Internal Notes", required=False, detail_only=True),
+        CharFieldConfig(name="badge", label="Badge", max_length=50, required=False, list_only=True),
         FloatFieldConfig(name="price", label="Price"),
         IntegerFieldConfig(name="rating", label="Rating", required=False),
         DateFieldConfig(name="release_date", label="Release Date", required=False),

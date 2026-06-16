@@ -1,6 +1,7 @@
 """
 Tests for django_admin_grpc.forms module.
 """
+
 from unittest.mock import Mock, patch
 
 import pytest
@@ -161,9 +162,7 @@ class TestFormBuilderBuild:
         assert list(field.choices) == [("", "---")]
 
     def test_custom_widget(self):
-        form_class = FormBuilder.build(
-            TestResource, widgets={"name": forms.Textarea()}
-        )
+        form_class = FormBuilder.build(TestResource, widgets={"name": forms.Textarea()})
         assert isinstance(form_class.base_fields["name"].widget, forms.Textarea)
 
     def test_custom_widget_string_path(self):

@@ -7,7 +7,9 @@ A reusable Django package for creating admin interfaces backed by gRPC services.
 from django_admin_grpc.adapters import BaseGrpcServiceAdapter
 from django_admin_grpc.admin import (
     AsyncGrpcResourceAdmin,
+    BulkActionMixin,
     GrpcResourceAdmin,
+    bulk_grpc_action,
     grpc_action,
     run_async,
 )
@@ -16,10 +18,12 @@ from django_admin_grpc.async_adapter import (
     BaseAsyncGrpcServiceAdapter,
     async_adapter_registry,
 )
+from django_admin_grpc.cache import CachedAdapterMixin, GrpcAdminCache
 from django_admin_grpc.exceptions import (
     GrpcAbortedError,
     GrpcAdminError,
     GrpcAlreadyExistsError,
+    GrpcBatchPartialError,
     GrpcCancelledError,
     GrpcDeadlineExceededError,
     GrpcFailedPreconditionError,
@@ -54,6 +58,7 @@ from django_admin_grpc.resources import (
     IntegerFieldConfig,
     TextFieldConfig,
 )
+from django_admin_grpc.utils import chunked
 
 __version__ = "0.2.2"
 
@@ -61,7 +66,9 @@ __all__ = [
     "GUIDE",
     "GrpcResourceAdmin",
     "AsyncGrpcResourceAdmin",
+    "BulkActionMixin",
     "grpc_action",
+    "bulk_grpc_action",
     "run_async",
     "BaseFieldConfig",
     "BaseGrpcResource",
@@ -79,6 +86,7 @@ __all__ = [
     "TextFieldConfig",
     "GrpcAdminError",
     "GrpcAlreadyExistsError",
+    "GrpcBatchPartialError",
     "GrpcNotFoundError",
     "GrpcPermissionDeniedError",
     "GrpcInvalidArgumentError",
@@ -100,4 +108,7 @@ __all__ = [
     "AsyncAdapterRegistry",
     "async_adapter_registry",
     "GrpcChannelPool",
+    "GrpcAdminCache",
+    "CachedAdapterMixin",
+    "chunked",
 ]

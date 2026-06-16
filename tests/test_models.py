@@ -1,6 +1,7 @@
 """
 Tests for django_admin_grpc.models module.
 """
+
 import pytest
 from django.core.exceptions import FieldDoesNotExist
 

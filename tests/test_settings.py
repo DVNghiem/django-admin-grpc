@@ -1,6 +1,7 @@
 """
 Tests for django_admin_grpc.settings module.
 """
+
 from unittest.mock import patch
 
 import pytest
@@ -28,10 +29,13 @@ class TestGetSetting:
             assert result.__name__ == "ModelAdmin"
 
     def test_imports_class_setting_failure_raises(self):
-        with patch(
-            "django_admin_grpc.settings.settings",
-            DEFAULT_ADMIN_CLASS="nonexistent.module.Class",
-        ), pytest.raises(ImportError):
+        with (
+            patch(
+                "django_admin_grpc.settings.settings",
+                DEFAULT_ADMIN_CLASS="nonexistent.module.Class",
+            ),
+            pytest.raises(ImportError),
+        ):
             get_setting("DEFAULT_ADMIN_CLASS")
 
     def test_returns_template_path_as_string(self):
@@ -87,3 +91,25 @@ class TestGetSetting:
             assert get_setting("GRPC_ADMIN_POOL_MAX_IDLE_SECONDS") == 60.0
             assert get_setting("GRPC_ADMIN_POOL_HEALTH_CHECK_INTERVAL") == 10.0
             assert get_setting("GRPC_ADMIN_POOL_HEALTH_CHECK_TIMEOUT") == 1.0
+
+    def test_cache_defaults(self):
+        """Cache settings should default to safe, opt-in values."""
+        assert get_setting("GRPC_ADMIN_CACHE_ENABLED") is False
+        assert get_setting("GRPC_ADMIN_CACHE_TTL") == 60
+        assert get_setting("GRPC_ADMIN_CACHE_PREFIX") == "grpc_admin"
+        assert get_setting("GRPC_ADMIN_CACHE_BACKEND") == "default"
+
+    def test_cache_settings_can_be_overridden(self):
+        with patch(
+            "django_admin_grpc.settings.settings",
+            GRPC_ADMIN={
+                "CACHE_ENABLED": True,
+                "CACHE_TTL": 300,
+                "CACHE_PREFIX": "myapp",
+                "CACHE_BACKEND": "memcached",
+            },
+        ):
+            assert get_setting("GRPC_ADMIN_CACHE_ENABLED") is True
+            assert get_setting("GRPC_ADMIN_CACHE_TTL") == 300
+            assert get_setting("GRPC_ADMIN_CACHE_PREFIX") == "myapp"
+            assert get_setting("GRPC_ADMIN_CACHE_BACKEND") == "memcached"

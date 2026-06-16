@@ -1,6 +1,7 @@
 """
 Tests validating the example catalog project demonstrates library features.
 """
+
 from unittest.mock import Mock
 
 import pytest
@@ -73,9 +74,7 @@ class TestExampleAdapterFiltering:
             assert item.price >= 100
 
     def test_date_range_filter(self, adapter):
-        result = adapter.list(
-            ProductResource, filters={"release_date__gte": "2023-01-01"}
-        )
+        result = adapter.list(ProductResource, filters={"release_date__gte": "2023-01-01"})
         for item in result.items:
             assert item.release_date >= "2023-01-01"
 
@@ -193,9 +192,7 @@ class TestExampleAdminValidationHooks:
                 if data.get("price") is not None and data["price"] <= 0:
                     from django import forms
 
-                    raise forms.ValidationError(
-                        "Price must be greater than zero."
-                    )
+                    raise forms.ValidationError("Price must be greater than zero.")
                 return data
 
         admin = ExampleProductAdmin()
@@ -263,9 +260,7 @@ class TestExampleGrpcAction:
 
             @grpc_action(description="Activate selected products")
             def bulk_activate(self, request, selected_pks):
-                return self.apply_grpc_bulk_update(
-                    request, selected_pks, {"active": True}
-                )
+                return self.apply_grpc_bulk_update(request, selected_pks, {"active": True})
 
         admin = ExampleProductAdmin(admin_site=AdminSite())
         request = RequestFactory().post("/")

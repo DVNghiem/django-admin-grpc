@@ -5,6 +5,7 @@ Mappers live between the admin layer and the adapter layer.  They translate
 Django form ``cleaned_data`` into gRPC request messages and gRPC responses
 into ``BaseGrpcResource`` instances.
 """
+
 from __future__ import annotations
 
 import logging

@@ -1,6 +1,7 @@
 """
 Tests for django_admin_grpc.interceptors module.
 """
+
 from unittest.mock import Mock, patch
 
 import grpc
@@ -25,9 +26,7 @@ class TestTraceClientInterceptor:
         assert interceptor._provider is provider
 
     def test_intercept_unary_unary_success(self):
-        interceptor = TraceClientInterceptor(
-            trace_context_provider=lambda: {"x-request-id": "abc"}
-        )
+        interceptor = TraceClientInterceptor(trace_context_provider=lambda: {"x-request-id": "abc"})
 
         mock_response = Mock()
         continuation = Mock(return_value=mock_response)
@@ -42,12 +41,8 @@ class TestTraceClientInterceptor:
 
         request = Mock()
 
-        with patch(
-            "django_admin_grpc.interceptors.time.monotonic", side_effect=[0.0, 0.123]
-        ):
-            result = interceptor.intercept_unary_unary(
-                continuation, call_details, request
-            )
+        with patch("django_admin_grpc.interceptors.time.monotonic", side_effect=[0.0, 0.123]):
+            result = interceptor.intercept_unary_unary(continuation, call_details, request)
 
         assert result is mock_response
         continuation.assert_called_once()
@@ -70,9 +65,7 @@ class TestTraceClientInterceptor:
         call_details.wait_for_ready = None
         call_details.compression = None
 
-        result = interceptor.intercept_unary_unary(
-            continuation, call_details, Mock()
-        )
+        result = interceptor.intercept_unary_unary(continuation, call_details, Mock())
         assert result is mock_response
         passed_details = continuation.call_args[0][0]
         assert passed_details.metadata == []
@@ -98,13 +91,12 @@ class TestTraceClientInterceptor:
         assert "x-null" not in metadata_dict
 
     def test_intercept_unary_unary_rpc_error(self):
-        interceptor = TraceClientInterceptor(
-            trace_context_provider=lambda: {"x-request-id": "abc"}
-        )
+        interceptor = TraceClientInterceptor(trace_context_provider=lambda: {"x-request-id": "abc"})
 
         class MockRpcError(grpc.RpcError):
             def code(self):
                 return grpc.StatusCode.UNAVAILABLE
+
             def details(self):
                 return "service unavailable"
 
@@ -119,12 +111,11 @@ class TestTraceClientInterceptor:
         call_details.wait_for_ready = None
         call_details.compression = None
 
-        with patch(
-            "django_admin_grpc.interceptors.time.monotonic", side_effect=[0.0, 0.5]
-        ), pytest.raises(grpc.RpcError):
-            interceptor.intercept_unary_unary(
-                continuation, call_details, Mock()
-            )
+        with (
+            patch("django_admin_grpc.interceptors.time.monotonic", side_effect=[0.0, 0.5]),
+            pytest.raises(grpc.RpcError),
+        ):
+            interceptor.intercept_unary_unary(continuation, call_details, Mock())
 
         continuation.assert_called_once()
 
@@ -161,9 +152,7 @@ class TestTraceClientInterceptor:
         call_details.wait_for_ready = None
         call_details.compression = None
 
-        result = interceptor.intercept_unary_stream(
-            continuation, call_details, Mock()
-        )
+        result = interceptor.intercept_unary_stream(continuation, call_details, Mock())
         assert result is not None
         passed_details = continuation.call_args[0][0]
         assert ("x-request-id", "stream") in passed_details.metadata
@@ -182,9 +171,7 @@ class TestTraceClientInterceptor:
         call_details.wait_for_ready = None
         call_details.compression = None
 
-        result = interceptor.intercept_stream_unary(
-            continuation, call_details, iter([Mock()])
-        )
+        result = interceptor.intercept_stream_unary(continuation, call_details, iter([Mock()]))
         assert result is not None
         passed_details = continuation.call_args[0][0]
         assert ("x-request-id", "stream") in passed_details.metadata
@@ -203,9 +190,7 @@ class TestTraceClientInterceptor:
         call_details.wait_for_ready = None
         call_details.compression = None
 
-        result = interceptor.intercept_stream_stream(
-            continuation, call_details, iter([Mock()])
-        )
+        result = interceptor.intercept_stream_stream(continuation, call_details, iter([Mock()]))
         assert result is not None
         passed_details = continuation.call_args[0][0]
         assert ("x-request-id", "stream") in passed_details.metadata
