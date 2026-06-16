@@ -4,6 +4,10 @@ Exception hierarchy for django-admin-grpc.
 Maps gRPC status codes to typed Python exceptions.
 """
 
+from __future__ import annotations
+
+from typing import Any
+
 import grpc
 
 
@@ -91,6 +95,55 @@ class GrpcCancelledError(GrpcAdminError):
     """The gRPC operation was cancelled by the client or server."""
 
     pass
+
+
+class GrpcBatchPartialError(GrpcAdminError):
+    """
+    Raised when a bulk gRPC operation finishes with a mix of successes and failures.
+
+    Attributes:
+        succeeded: Primary keys (or input items) that were processed successfully.
+        failed: Mapping of ``{pk: error}`` (or list of items) that failed.
+        operation: Name of the bulk operation (``"bulk_create"``, ``"bulk_update"``,
+            ``"bulk_delete"``) so callers can react without sniffing the type.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        succeeded: list[Any] | None = None,
+        failed: dict[Any, Exception] | list[Any] | None = None,
+        operation: str | None = None,
+        code: str | None = None,
+        grpc_code: grpc.StatusCode | None = None,
+        details: str | None = None,
+    ):
+        super().__init__(
+            message,
+            code=code or "BATCH_PARTIAL",
+            grpc_code=grpc_code,
+            details=details,
+        )
+        self.succeeded: list[Any] = list(succeeded or [])
+        self.failed: dict[Any, Exception] | list[Any] = (
+            failed if failed is not None else {}
+        )
+        self.operation: str | None = operation
+
+    def __str__(self) -> str:
+        parts = [self.message]
+        if self.operation:
+            parts.append(f"(operation={self.operation})")
+        parts.append(
+            f"(succeeded={len(self.succeeded)} failed={len(self.failed)})"
+        )
+        if self.code:
+            parts.append(f"(code={self.code})")
+        if self.grpc_code:
+            parts.append(f"(grpc_code={self.grpc_code.name})")
+        return " ".join(parts)
+
 
 def map_grpc_error(exc: grpc.RpcError) -> GrpcAdminError:
     """

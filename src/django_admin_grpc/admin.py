@@ -29,7 +29,11 @@ from django.urls import reverse
 
 from django_admin_grpc.adapters import BaseGrpcServiceAdapter
 from django_admin_grpc.async_adapter import BaseAsyncGrpcServiceAdapter
-from django_admin_grpc.exceptions import GrpcAdminError, get_grpc_error_message
+from django_admin_grpc.exceptions import (
+    GrpcAdminError,
+    GrpcBatchPartialError,
+    get_grpc_error_message,
+)
 from django_admin_grpc.models import GrpcFakeQuerySet, ModelWrapper
 from django_admin_grpc.paginator import GrpcPaginator, PagedResult, compute_filter_fingerprint
 from django_admin_grpc.resources import BaseGrpcResource
@@ -88,6 +92,336 @@ def grpc_action(
     if function is None:
         return decorator
     return decorator(function)
+
+
+def bulk_grpc_action(
+    description: str = "",
+    *,
+    field: str = "",
+    value: Any = None,
+    permissions: list[str] | None = None,
+) -> Callable[..., Any]:
+    """
+    Decorator that turns a method into a single-field bulk update action.
+
+    The decorated method receives ``selected_pks`` and delegates to
+    :meth:`GrpcResourceAdmin.apply_grpc_bulk_update` with ``{field: value}``.
+    A typical use is to bulk-toggle a flag (e.g. ``active=True``) on the
+    currently selected rows::
+
+        class ProductAdmin(GrpcResourceAdmin):
+            actions = ["bulk_activate"]
+
+            @bulk_grpc_action(description="Activate selected", field="active", value=True)
+            def bulk_activate(self, request, selected_pks):
+                # custom side effects allowed; the decorator wraps the body
+                # so the field/value pair is applied automatically.
+                ...
+
+    Both bare and parenthesised invocations are supported::
+
+        @bulk_grpc_action
+        def my_action(self, request, selected_pks): ...
+
+        @bulk_grpc_action(description="x", field="y", value=1)
+        def my_action(self, request, selected_pks): ...
+
+    Args:
+        description: Human-readable label for the admin action dropdown.
+        field: Field name to set on every selected record.
+        value: Value to assign to *field*.
+        permissions: Optional list of permission codenames.
+    """
+
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+        @functools.wraps(func)
+        def wrapper(self: Any, request: HttpRequest, queryset: Any) -> Any:
+            selected_pks = self.get_grpc_selected_pks(request, queryset)
+            # Apply the field/value update first; the body can layer on top.
+            if field:
+                self.apply_grpc_bulk_update(
+                    request, selected_pks, {field: value}
+                )
+            return func(self, request, selected_pks)
+
+        wrapper.short_description = description or getattr(  # type: ignore[attr-defined]
+            func, "short_description", func.__name__.replace("_", " ").capitalize()
+        )
+        wrapper.grpc_bulk_field = field  # type: ignore[attr-defined]
+        wrapper.grpc_bulk_value = value  # type: ignore[attr-defined]
+        if permissions is not None:
+            wrapper.allowed_permissions = permissions  # type: ignore[attr-defined]
+        return wrapper
+
+    # Allow bare decorator usage: @bulk_grpc_action
+    if callable(description):
+        func = description
+        description = ""
+        return decorator(func)
+    return decorator
+
+
+class BulkActionMixin:
+    """
+    Adds bulk actions on top of :class:`GrpcResourceAdmin`.
+
+    The mixin is applied automatically — ``GrpcResourceAdmin`` already
+    inherits from it — but you can subclass it on a custom admin base to
+    tweak the behaviour (e.g. disable ``bulk_create_action`` for read-only
+    resources).
+
+    Provided actions:
+
+    * ``bulk_delete_action`` — always available; delegates to
+      :meth:`apply_grpc_bulk_delete` which uses the adapter's ``bulk_delete``.
+    * ``bulk_create_action`` — opt-in; only added when
+      ``grpc_bulk_create_enabled = True`` on the admin.
+    * ``bulk_update_action`` — opt-in; only added when
+      ``grpc_bulk_update_enabled = True`` on the admin.
+
+    The mixin also guarantees that the default ``delete_selected`` action
+    is removed in :meth:`get_actions`.
+    """
+
+    #: Set to ``True`` to expose ``bulk_create_action`` in the actions list.
+    grpc_bulk_create_enabled: bool = False
+    #: Set to ``True`` to expose ``bulk_update_action`` in the actions list.
+    grpc_bulk_update_enabled: bool = False
+
+    # ``_resource_class`` is normally set on ``GrpcResourceAdmin.__init__``
+    # but type checkers need an explicit declaration on the mixin so the
+    # helper methods below can reference it.
+    _resource_class: type[BaseGrpcResource]  # type: ignore[assignment]
+
+    # ── Action wrappers (named so Django's get_actions can discover them) ──
+
+    def bulk_delete_action(self, request: HttpRequest, queryset: Any) -> None:
+        """
+        Built-in admin action that deletes every selected row.
+
+        Unlike Django's default ``delete_selected``, this path calls
+        :meth:`apply_grpc_bulk_delete` which honours the adapter's
+        ``batch_size`` and posts Django messages on partial failure (the
+        underlying :class:`GrpcBatchPartialError` is consumed internally
+        and is not re-raised).
+        """
+        self.apply_grpc_bulk_delete(request, queryset)
+
+    def bulk_create_action(self, request: HttpRequest, queryset: Any) -> None:
+        """
+        Opt-in admin action that creates one row per selected record.
+
+        Subclasses may override to customise the payload, or override
+        :meth:`build_bulk_create_payload` to reshape the data sent to the
+        adapter.
+        """
+        items = list(self.build_bulk_create_payload(request, queryset))
+        adapter = self.get_adapter()  # type: ignore[attr-defined]
+        if adapter is None:
+            messages.error(request, "gRPC adapter not available.")
+            return
+        try:
+            if isinstance(adapter, BaseAsyncGrpcServiceAdapter):
+                # Async adapter: ``bulk_create`` is a coroutine.
+                created = cast(
+                    list[BaseGrpcResource],
+                    run_async(
+                        adapter.bulk_create(self._resource_class, items)  # type: ignore[attr-defined]
+                    ),
+                )
+            else:
+                created = adapter.bulk_create(  # type: ignore[attr-defined]
+                    self._resource_class, items
+                )
+        except GrpcBatchPartialError as exc:
+            messages.warning(
+                request,
+                f"Created {len(exc.succeeded)} of {len(items)} record(s); "
+                f"{len(exc.failed)} failed.",
+            )
+            return
+        messages.success(request, f"Created {len(created)} record(s).")
+
+    def bulk_update_action(self, request: HttpRequest, queryset: Any) -> None:
+        """
+        Opt-in admin action that updates the selected records with a
+        shared payload built by :meth:`build_bulk_update_payload`.
+        """
+        items = list(self.build_bulk_update_payload(request, queryset))
+        adapter = self.get_adapter()  # type: ignore[attr-defined]
+        if adapter is None:
+            messages.error(request, "gRPC adapter not available.")
+            return
+        try:
+            if isinstance(adapter, BaseAsyncGrpcServiceAdapter):
+                # Async adapter: ``bulk_update`` is a coroutine.
+                updated = cast(
+                    list[BaseGrpcResource],
+                    run_async(
+                        adapter.bulk_update(self._resource_class, items)  # type: ignore[attr-defined]
+                    ),
+                )
+            else:
+                updated = adapter.bulk_update(  # type: ignore[attr-defined]
+                    self._resource_class, items
+                )
+        except GrpcBatchPartialError as exc:
+            messages.warning(
+                request,
+                f"Updated {len(exc.succeeded)} of {len(items)} record(s); "
+                f"{len(exc.failed)} failed.",
+            )
+            return
+        messages.success(request, f"Updated {len(updated)} record(s).")
+
+    bulk_delete_action.short_description = (  # type: ignore[attr-defined]
+        "Delete selected %(verbose_name_plural)s"
+    )
+    bulk_create_action.short_description = (  # type: ignore[attr-defined]
+        "Create one record per selected %(verbose_name_plural)s"
+    )
+    bulk_update_action.short_description = (  # type: ignore[attr-defined]
+        "Update selected %(verbose_name_plural)s"
+    )
+
+    # ── Hooks for subclasses to customise payloads ────────────────────────
+
+    def build_bulk_create_payload(
+        self,
+        request: HttpRequest,
+        queryset: Any,
+    ) -> list[dict[str, Any]]:
+        """
+        Build the create payload for :meth:`bulk_create_action`.
+
+        Default: empty ``{}`` per selected PK.  Subclasses should override
+        to attach the data they want each new record to start with.
+        """
+        selected_pks = self.get_grpc_selected_pks(request, queryset)  # type: ignore[attr-defined]
+        return [{} for _ in selected_pks]
+
+    def build_bulk_update_payload(
+        self,
+        request: HttpRequest,
+        queryset: Any,
+    ) -> list[dict[str, Any]]:
+        """
+        Build the update payload for :meth:`bulk_update_action`.
+
+        Default: ``{pk_field: pk}`` per selected PK so the adapter can
+        identify the row but no fields are changed.  Subclasses should
+        override to attach the fields they want updated.
+        """
+        selected_pks = self.get_grpc_selected_pks(request, queryset)  # type: ignore[attr-defined]
+        pk_field = self._resource_class.Meta.pk_field  # type: ignore[attr-defined]
+        return [{pk_field: pk} for pk in selected_pks]
+
+    # ── gRPC-aware bulk delete helper ────────────────────────────────────
+
+    def apply_grpc_bulk_delete(
+        self,
+        request: HttpRequest,
+        queryset: Any,
+    ) -> dict[str, Any] | None:
+        """
+        Delete selected records via the adapter's ``bulk_delete``.
+
+        Supports both a Django queryset (standard actions) and a list of
+        PKs (from :func:`grpc_action`).
+
+        On full success, returns the adapter's ``{deleted, failed}`` summary.
+        On partial failure, posts Django messages summarising the failure
+        and returns ``None``; the underlying :class:`GrpcBatchPartialError`
+        is consumed internally and not re-raised.
+        """
+        adapter = self.get_adapter()  # type: ignore[attr-defined]
+        if adapter is None:
+            messages.error(request, "gRPC adapter not available.")
+            return None
+
+        if isinstance(queryset, (list, tuple)):
+            selected_pks: list[Any] = list(queryset)
+        else:
+            selected_pks = self.get_grpc_selected_pks(request, queryset)  # type: ignore[attr-defined]
+
+        if not selected_pks:
+            return {"deleted": 0, "failed": []}
+
+        # Async adapters are not coroutines themselves; route through
+        # ``run_async`` when the resolved adapter is async.
+        if isinstance(adapter, BaseAsyncGrpcServiceAdapter):
+            try:
+                result = cast(
+                    dict[str, Any] | None,
+                    run_async(adapter.bulk_delete(self._resource_class, selected_pks)),
+                )
+            except GrpcBatchPartialError as exc:
+                self._report_bulk_delete_failure(request, exc)
+                return None
+        else:
+            try:
+                result = adapter.bulk_delete(self._resource_class, selected_pks)  # type: ignore[attr-defined]
+            except GrpcBatchPartialError as exc:
+                self._report_bulk_delete_failure(request, exc)
+                return None
+
+        if result is None:
+            # ``_report_bulk_delete_failure`` already posted messages.
+            return None
+        deleted_count = result.get("deleted", 0)
+        if deleted_count:
+            messages.success(
+                request,
+                f"Successfully deleted {deleted_count} record(s).",
+            )
+        return result
+
+    def _report_bulk_delete_failure(
+        self,
+        request: HttpRequest,
+        exc: GrpcBatchPartialError,
+    ) -> None:
+        """Post Django messages summarising a partial bulk-delete failure."""
+        deleted = len(exc.succeeded)
+        failed_count = len(exc.failed)
+        messages.error(
+            request,
+            f"Deleted {deleted} of "
+            f"{deleted + failed_count} record(s); {failed_count} failed.",
+        )
+        failed_items: Any = exc.failed
+        if isinstance(failed_items, dict):
+            for failed_pk, exc_obj in failed_items.items():
+                self._post_delete_failure(request, failed_pk, exc_obj)
+        else:
+            for item in failed_items:
+                self._post_delete_failure(request, None, item)
+
+    def _post_delete_failure(
+        self,
+        request: HttpRequest,
+        failed_pk: Any,
+        exc_obj: Any,
+    ) -> None:
+        """Post a single Django message for a per-PK delete failure."""
+        if isinstance(exc_obj, GrpcAdminError):
+            level, message = get_grpc_error_message(exc_obj)
+        else:
+            level, message = messages.ERROR, str(exc_obj)
+        try:
+            messages.add_message(
+                request,
+                level,
+                f"Delete failed for pk={failed_pk}: {message}",
+            )
+        except Exception:
+            # No messages middleware installed (e.g. raw RequestFactory).
+            # The summary error above is still posted, so the user sees
+            # the count of failures even without the per-row detail.
+            logger.debug(
+                "messages.add_message failed; messages middleware missing?",
+                exc_info=True,
+            )
 
 
 class GrpcChangeList(ChangeList):
@@ -417,7 +751,7 @@ class GrpcChangeList(ChangeList):
             messages.info(request, "No data found or error fetching data.")
 
 
-class GrpcResourceAdmin(ModelAdmin):
+class GrpcResourceAdmin(BulkActionMixin, ModelAdmin):
     """
     Admin class for resources fetched from a gRPC service.
 
@@ -434,6 +768,11 @@ class GrpcResourceAdmin(ModelAdmin):
     * ``grpc_enable_create`` / ``grpc_enable_update`` / ``grpc_enable_delete``
     * ``grpc_detail_fields`` – fields shown in the read-only detail section.
     * ``grpc_cursor_pagination`` – use cursor-based pagination.
+    * ``grpc_bulk_create_enabled`` / ``grpc_bulk_update_enabled`` – opt-in
+      flags to expose ``bulk_create_action`` / ``bulk_update_action``.
+
+    Inherits :class:`BulkActionMixin` for built-in bulk delete and opt-in
+    bulk create/update actions.
     """
 
     resource_class: type[BaseGrpcResource] | None = None
@@ -517,37 +856,55 @@ class GrpcResourceAdmin(ModelAdmin):
         actions = super().get_actions(request)
         actions.pop("delete_selected", None)
         if self._can_delete():
+            # New name (preferred). Delegates to the BulkActionMixin
+            # implementation.
+            actions["bulk_delete_action"] = (  # type: ignore[assignment]
+                self.__class__.bulk_delete_action,
+                "bulk_delete_action",
+                getattr(
+                    self.bulk_delete_action,
+                    "short_description",
+                    "Delete selected %(verbose_name_plural)s",
+                ),
+            )
+            # Legacy name kept for backward compatibility.
             actions["grpc_delete_selected"] = (  # type: ignore[assignment]
                 self.__class__._grpc_delete_selected,
                 "grpc_delete_selected",
                 "Delete selected %(verbose_name_plural)s",
             )
+        if getattr(self, "grpc_bulk_create_enabled", False) and self._can_create():
+            actions["bulk_create_action"] = (  # type: ignore[assignment]
+                self.__class__.bulk_create_action,
+                "bulk_create_action",
+                getattr(
+                    self.bulk_create_action,
+                    "short_description",
+                    "Create one record per selected %(verbose_name_plural)s",
+                ),
+            )
+        if getattr(self, "grpc_bulk_update_enabled", False) and self._can_update():
+            actions["bulk_update_action"] = (  # type: ignore[assignment]
+                self.__class__.bulk_update_action,
+                "bulk_update_action",
+                getattr(
+                    self.bulk_update_action,
+                    "short_description",
+                    "Update selected %(verbose_name_plural)s",
+                ),
+            )
         return actions
 
     def _grpc_delete_selected(self, request: HttpRequest, queryset: Any) -> None:
-        selected_pks = self.get_grpc_selected_pks(request, queryset)
-        deleted = 0
-        errors = 0
-        adapter = self.get_adapter()
-        if adapter is None:
-            messages.error(request, "gRPC adapter not available.")
-            return
-        for pk in selected_pks:
-            try:
-                self._adapter_delete(adapter, self._resource_class, pk)
-                deleted += 1
-            except GrpcAdminError as exc:
-                logger.warning("gRPC delete failed for pk=%s: %s", pk, exc)
-                errors += 1
-                level, message = get_grpc_error_message(exc)
-                messages.add_message(request, level, message)
-            except Exception as exc:
-                logger.warning("gRPC delete failed for pk=%s: %s", pk, exc)
-                errors += 1
-        if deleted:
-            messages.success(request, f"Successfully deleted {deleted} record(s).")
-        if errors:
-            messages.error(request, f"Failed to delete {errors} record(s).")
+        """
+        Legacy bulk-delete entry point kept for backward compatibility.
+
+        New code should use :meth:`BulkActionMixin.bulk_delete_action`
+        (registered as ``bulk_delete_action`` in the actions dropdown).
+        """
+        # Delegate to the new bulk-delete helper; it already posts the
+        # success/failure messages, so this wrapper does not duplicate them.
+        self.apply_grpc_bulk_delete(request, queryset)
 
     _grpc_delete_selected.short_description = "Delete selected records"  # type: ignore[attr-defined]
 

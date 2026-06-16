@@ -1,14 +1,21 @@
 """
 Tests for django_admin_grpc.adapters module.
 """
+from typing import Any
 from unittest.mock import Mock, patch
 
 import grpc
 import pytest
 
 from django_admin_grpc.adapters import BaseGrpcServiceAdapter
+from django_admin_grpc.exceptions import GrpcBatchPartialError
 from django_admin_grpc.paginator import PagedResult
 from django_admin_grpc.pool import GrpcChannelPool
+from django_admin_grpc.resources import (
+    BaseGrpcResource,
+    CharFieldConfig,
+    IntegerFieldConfig,
+)
 
 
 class MinimalAdapter(BaseGrpcServiceAdapter):
@@ -252,3 +259,301 @@ class TestBaseGrpcServiceAdapterChannel:
             assert channel is pool_channel
 
         pool.get_channel.assert_called_once()
+
+
+# ── Bulk operation tests ─────────────────────────────────────────────────
+
+
+class BulkResource(BaseGrpcResource):
+    class Meta:
+        app_label = "shop"
+        model_name = "bulkitem"
+        pk_field = "id"
+
+    fields = [
+        IntegerFieldConfig(name="id"),
+        CharFieldConfig(name="name"),
+    ]
+
+
+class CountingAdapter(BaseGrpcServiceAdapter):
+    """Adapter that records every create/update/delete call."""
+
+    service_name = "counting"
+
+    def __init__(self):
+        self.created: list[dict] = []
+        self.updated: list[tuple[str, dict]] = []
+        self.deleted: list[str] = []
+        self._raise_on_create: set[int] = set()
+        self._raise_on_update: set[Any] = set()
+        self._raise_on_delete: set[Any] = set()
+
+    def list(self, resource_class, page=1, page_size=25, filters=None):
+        return PagedResult(items=[])
+
+    def get(self, resource_class, pk):
+        return None
+
+    def create(self, resource_class, data):
+        self.created.append(data)
+        if id(data) in self._raise_on_create:
+            raise RuntimeError("create failed")
+        return resource_class(**data)
+
+    def update(self, resource_class, pk, data):
+        self.updated.append((pk, data))
+        if pk in self._raise_on_update:
+            raise RuntimeError("update failed")
+        return resource_class(**data)
+
+    def delete(self, resource_class, pk):
+        self.deleted.append(pk)
+        if pk in self._raise_on_delete:
+            raise RuntimeError("delete failed")
+        return True
+
+
+class TestBulkCreate:
+    def test_empty_input_returns_empty(self):
+        adapter = CountingAdapter()
+        assert adapter.bulk_create(BulkResource, []) == []
+
+    def test_creates_all(self):
+        adapter = CountingAdapter()
+        items = [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}]
+        result = adapter.bulk_create(BulkResource, items)
+        assert len(result) == 2
+        assert [r.id for r in result] == [1, 2]
+        assert adapter.created == items
+
+    def test_chunks_input(self):
+        adapter = CountingAdapter()
+        adapter.batch_size = 2
+        items = [{"id": i, "name": f"n{i}"} for i in range(5)]
+        result = adapter.bulk_create(BulkResource, items)
+        assert len(result) == 5
+        assert len(adapter.created) == 5
+
+    def test_partial_failure_raises_partial_error(self):
+        adapter = CountingAdapter()
+        items = [{"id": i, "name": f"n{i}"} for i in range(3)]
+        # Mark the second item to fail.
+        adapter._raise_on_create.add(id(items[1]))
+        with pytest.raises(GrpcBatchPartialError) as info:
+            adapter.bulk_create(BulkResource, items)
+        exc = info.value
+        assert exc.operation == "bulk_create"
+        assert len(exc.succeeded) == 2
+        assert len(exc.failed) == 1
+
+    def test_batch_size_override(self):
+        adapter = CountingAdapter()
+        items = [{"id": i, "name": f"n{i}"} for i in range(6)]
+        result = adapter.bulk_create(BulkResource, items, batch_size=2)
+        assert len(result) == 6
+
+    def test_partial_failure_log_excludes_payload(self, caplog):
+        """The warning log for partial bulk_create failures must not include
+        the raw input payload — only the resource name, item index, and
+        exception info."""
+        import logging
+
+        adapter = CountingAdapter()
+        items = [
+            {"id": 1, "name": "secret-1", "token": "TOPSECRET"},
+            {"id": 2, "name": "secret-2", "token": "TOPSECRET"},
+        ]
+        adapter._raise_on_create.add(id(items[0]))
+        with (
+            caplog.at_level(logging.WARNING, logger="django_admin_grpc.adapters"),
+            pytest.raises(GrpcBatchPartialError),
+        ):
+            adapter.bulk_create(BulkResource, items)
+        # At least one warning was logged for the failure.
+        assert any(
+            "bulk_create" in record.message for record in caplog.records
+        )
+        # The log message and any of its arguments must not include the
+        # sensitive payload values.
+        joined = "\n".join(record.getMessage() for record in caplog.records)
+        assert "TOPSECRET" not in joined
+        assert "secret-1" not in joined
+        assert "secret-2" not in joined
+
+
+class TestBulkUpdate:
+    def test_empty_input_returns_empty(self):
+        adapter = CountingAdapter()
+        assert adapter.bulk_update(BulkResource, []) == []
+
+    def test_updates_all(self):
+        adapter = CountingAdapter()
+        items = [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}]
+        result = adapter.bulk_update(BulkResource, items)
+        assert len(result) == 2
+        assert adapter.updated == [("1", items[0]), ("2", items[1])]
+
+    def test_chunks_input(self):
+        adapter = CountingAdapter()
+        adapter.batch_size = 2
+        items = [{"id": i, "name": f"n{i}"} for i in range(5)]
+        result = adapter.bulk_update(BulkResource, items)
+        assert len(result) == 5
+        assert len(adapter.updated) == 5
+
+    def test_missing_pk_recorded_as_failure(self):
+        adapter = CountingAdapter()
+        items = [{"id": 1, "name": "a"}, {"name": "b"}, {"id": 3, "name": "c"}]
+        with pytest.raises(GrpcBatchPartialError) as info:
+            adapter.bulk_update(BulkResource, items)
+        exc = info.value
+        assert exc.operation == "bulk_update"
+        assert sorted(exc.succeeded) == [1, 3]
+        # The missing-pk item is recorded as a failure with a ``ValueError``.
+        assert None in exc.failed
+        assert isinstance(exc.failed[None], ValueError)
+
+    def test_partial_failure_raises_partial_error(self):
+        adapter = CountingAdapter()
+        items = [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}]
+        adapter._raise_on_update.add("2")
+        with pytest.raises(GrpcBatchPartialError) as info:
+            adapter.bulk_update(BulkResource, items)
+        exc = info.value
+        assert exc.operation == "bulk_update"
+        assert exc.succeeded == [1]
+        # Pk keys in the failed dict mirror what the caller passed.
+        assert 2 in exc.failed
+        assert isinstance(exc.failed[2], RuntimeError)
+
+    def test_respects_custom_pk_field(self):
+        class CustomPkResource(BaseGrpcResource):
+            class Meta:
+                app_label = "shop"
+                model_name = "custompk"
+                pk_field = "rule_id"
+
+            fields = [
+                CharFieldConfig(name="rule_id"),
+                CharFieldConfig(name="value"),
+            ]
+
+        adapter = CountingAdapter()
+        items = [{"rule_id": "r1", "value": "x"}]
+        result = adapter.bulk_update(CustomPkResource, items)
+        assert result[0].rule_id == "r1"
+        assert adapter.updated == [("r1", items[0])]
+
+    def test_batch_size_override(self):
+        adapter = CountingAdapter()
+        items = [{"id": i, "name": f"n{i}"} for i in range(6)]
+        result = adapter.bulk_update(BulkResource, items, batch_size=2)
+        assert len(result) == 6
+
+    def test_missing_pk_log_excludes_payload(self, caplog):
+        """The warning log for missing-pk bulk_update items must not include
+        the raw input payload — only the resource name and pk field."""
+        import logging
+
+        adapter = CountingAdapter()
+        items = [
+            {"id": 1, "name": "secret-1", "token": "TOPSECRET"},
+            {"name": "no-pk", "token": "TOPSECRET"},
+        ]
+        with (
+            caplog.at_level(logging.WARNING, logger="django_admin_grpc.adapters"),
+            pytest.raises(GrpcBatchPartialError),
+        ):
+            adapter.bulk_update(BulkResource, items)
+        assert any(
+            "missing pk" in record.message for record in caplog.records
+        )
+        joined = "\n".join(record.getMessage() for record in caplog.records)
+        assert "TOPSECRET" not in joined
+        assert "secret-1" not in joined
+        assert "no-pk" not in joined
+
+    def test_partial_failure_log_excludes_payload(self, caplog):
+        """The warning log for partial bulk_update failures must not include
+        the raw input payload — only the resource name, PK, and exception."""
+        import logging
+
+        adapter = CountingAdapter()
+        items = [
+            {"id": 1, "name": "ok-1", "token": "TOPSECRET"},
+            {"id": 2, "name": "fail-2", "token": "TOPSECRET"},
+        ]
+        adapter._raise_on_update.add("2")
+        with (
+            caplog.at_level(logging.WARNING, logger="django_admin_grpc.adapters"),
+            pytest.raises(GrpcBatchPartialError),
+        ):
+            adapter.bulk_update(BulkResource, items)
+        joined = "\n".join(record.getMessage() for record in caplog.records)
+        assert "TOPSECRET" not in joined
+        assert "ok-1" not in joined
+        assert "fail-2" not in joined
+
+
+class TestBulkDelete:
+    def test_empty_input_returns_empty(self):
+        adapter = CountingAdapter()
+        result = adapter.bulk_delete(BulkResource, [])
+        assert result == {"deleted": 0, "failed": []}
+
+    def test_deletes_all(self):
+        adapter = CountingAdapter()
+        result = adapter.bulk_delete(BulkResource, ["1", "2", "3"])
+        assert result == {"deleted": 3, "failed": []}
+        assert adapter.deleted == ["1", "2", "3"]
+
+    def test_chunks_input(self):
+        adapter = CountingAdapter()
+        adapter.batch_size = 2
+        result = adapter.bulk_delete(BulkResource, ["1", "2", "3", "4", "5"])
+        assert result == {"deleted": 5, "failed": []}
+
+    def test_partial_failure_raises_partial_error(self):
+        adapter = CountingAdapter()
+        adapter._raise_on_delete.add("2")
+        with pytest.raises(GrpcBatchPartialError) as info:
+            adapter.bulk_delete(BulkResource, ["1", "2", "3"])
+        exc = info.value
+        assert exc.operation == "bulk_delete"
+        assert exc.succeeded == ["1", "3"]
+        assert "2" in exc.failed
+        assert isinstance(exc.failed["2"], RuntimeError)
+
+    def test_batch_size_override(self):
+        adapter = CountingAdapter()
+        result = adapter.bulk_delete(BulkResource, ["1", "2", "3"], batch_size=1)
+        assert result == {"deleted": 3, "failed": []}
+        assert adapter.deleted == ["1", "2", "3"]
+
+
+class TestGetPkFieldName:
+    def test_default_pk_field(self):
+        class DefaultPkResource(BaseGrpcResource):
+            class Meta:
+                app_label = "shop"
+                model_name = "defaultpk"
+
+            fields = [IntegerFieldConfig(name="id")]
+
+        assert (
+            BaseGrpcServiceAdapter._get_pk_field_name(DefaultPkResource) == "id"
+        )
+
+    def test_custom_pk_field(self):
+        class CustomPkResource(BaseGrpcResource):
+            class Meta:
+                app_label = "shop"
+                model_name = "custompk"
+                pk_field = "rule_id"
+
+            fields = [CharFieldConfig(name="rule_id")]
+
+        assert (
+            BaseGrpcServiceAdapter._get_pk_field_name(CustomPkResource) == "rule_id"
+        )

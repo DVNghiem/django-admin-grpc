@@ -355,25 +355,85 @@ For cursor-based pagination, set `grpc_cursor_pagination = True` on the admin. T
 
 ## How to Customize Actions
 
-Bulk delete is built in. When `grpc_enable_delete = True` and the adapter supports delete, a "Delete selected records" action appears in the dropdown.
+`GrpcResourceAdmin` ships with bulk actions out of the box. When the adapter supports delete, a "Delete selected records" action is registered automatically. Opt-in flags expose additional bulk actions for create and update.
 
-**Adding custom actions:**
+**Custom bulk actions with `@grpc_action`:**
 
 ```python
 from django.contrib import messages
+from django_admin_grpc.admin import GrpcResourceAdmin, grpc_action
 
 class ProductAdmin(GrpcResourceAdmin):
     actions = ["activate_selected"]
 
-    @admin.action(description="Activate selected products")
-    def activate_selected(self, request, queryset):
-        adapter = self.get_adapter()
-        for obj in queryset:
-            adapter.update(self.resource_class, obj.pk, {"active": True})
-        messages.success(request, "Selected products activated.")
+    @grpc_action(description="Activate selected products")
+    def activate_selected(self, request, selected_pks):
+        updated, errors = self.apply_grpc_bulk_update(
+            request, selected_pks, {"active": True}
+        )
+        if updated:
+            messages.success(request, f"Activated {updated} product(s).")
 ```
 
-Because `queryset` is a `GrpcFakeQuerySet`, iterate over it to access the wrapped resource instances.
+**Single-field bulk action with `@bulk_grpc_action`:**
+
+```python
+from django_admin_grpc.admin import bulk_grpc_action
+
+class ProductAdmin(GrpcResourceAdmin):
+    actions = ["deactivate_selected"]
+
+    @bulk_grpc_action(description="Deactivate selected", field="active", value=False)
+    def deactivate_selected(self, request, selected_pks):
+        # Custom side effects allowed; the decorator already applied
+        # {active: False} via the adapter's bulk update.
+        ...
+```
+
+The `@bulk_grpc_action` decorator works with both parenthesised
+(`@bulk_grpc_action(...)`) and bare (`@bulk_grpc_action`) invocations.
+
+---
+
+## Batch Operations
+
+The package exposes chunked, partial-failure-aware bulk operations on every adapter. The defaults loop `create()` / `update()` / `delete()` in chunks so you get safe, well-defined behaviour even when the backing service does not offer a true batch endpoint.
+
+| Adapter method | Returns on success | Raises on partial failure |
+|----------------|--------------------|---------------------------|
+| `adapter.bulk_create(resource_class, items, batch_size=None)` | `list[BaseGrpcResource]` of created items | `GrpcBatchPartialError` with `succeeded` and `failed` |
+| `adapter.bulk_update(resource_class, items, batch_size=None)` | `list[BaseGrpcResource]` of updated items | `GrpcBatchPartialError` with the failed PKs |
+| `adapter.bulk_delete(resource_class, pks, batch_size=None)` | `{"deleted": int, "failed": []}` | `GrpcBatchPartialError` with the failed PKs |
+
+Every bulk method honours the adapter's `batch_size` attribute (default `100`) and an explicit `batch_size` override. Items that fail are accumulated in the exception's `failed` mapping — keys are the original PK (or input index for `bulk_create`); values are the underlying exception. Per-failure log entries record only the resource name, the PK (or item index), and the exception message — raw input payloads are intentionally not logged because they may contain sensitive fields.
+
+```python
+from django_admin_grpc.exceptions import GrpcBatchPartialError
+
+adapter = MyAdapter()
+try:
+    deleted = adapter.bulk_delete(ProductResource, ["1", "2", "3"])
+    print(deleted)
+    # {'deleted': 3, 'failed': []}
+except GrpcBatchPartialError as exc:
+    print(f"{len(exc.succeeded)} OK, {len(exc.failed)} failed")
+    for failed_pk, err in exc.failed.items():
+        print(f"  pk={failed_pk} → {err}")
+```
+
+**Async adapters** (`BaseAsyncGrpcServiceAdapter`) ship the same `bulk_create` / `bulk_update` / `bulk_delete` coroutines with identical signatures.
+
+**Built-in admin actions.** `BulkActionMixin` (mixed into `GrpcResourceAdmin`) registers these automatically:
+
+| Action | Visible when | Behaviour |
+|--------|--------------|-----------|
+| `bulk_delete_action` | `grpc_enable_delete = True` and the adapter supports delete | Delegates to `apply_grpc_bulk_delete` → adapter's `bulk_delete` |
+| `bulk_create_action` | `grpc_bulk_create_enabled = True` and the adapter supports create | Builds one record per selected PK via `build_bulk_create_payload` and calls `adapter.bulk_create` |
+| `bulk_update_action` | `grpc_bulk_update_enabled = True` and the adapter supports update | Builds the update payload via `build_bulk_update_payload` and calls `adapter.bulk_update` |
+
+Override `build_bulk_create_payload` / `build_bulk_update_payload` on the admin class to customise the per-row payload. Django's default `delete_selected` is removed.
+
+**Customising the bulk delete result.** The `apply_grpc_bulk_delete` helper posts a Django `messages.success` line on full success, a `messages.error` summary plus per-PK error messages on partial failure, and returns the adapter's `{deleted, failed}` summary so you can layer extra logic on top.
 
 ---
 
@@ -478,6 +538,53 @@ class ProductAdmin(AsyncGrpcResourceAdmin):
 
 ---
 
+## Caching
+
+Read-through caching for `list()` and `get()` is opt-in via the `CachedAdapterMixin`. When caching is enabled, the mixin caches successful list/get results, caches `None` for "not found" lookups, and invalidates the resource namespace on every write (create/update/delete and their `bulk_*` counterparts).
+
+**Enable in `settings.py`:**
+
+```python
+GRPC_ADMIN = {
+    "CACHE_ENABLED": True,        # default False
+    "CACHE_TTL": 60,              # seconds
+    "CACHE_PREFIX": "grpc_admin", # key namespace
+    "CACHE_BACKEND": "default",   # Django CACHES alias
+}
+```
+
+**Combine the mixin with your adapter:**
+
+```python
+from django_admin_grpc import BaseGrpcServiceAdapter, CachedAdapterMixin
+from django_admin_grpc.paginator import PagedResult
+
+# Step 1: implement the gRPC stubs in a plain adapter.  The mixin must NOT be
+# combined with this class directly — the concrete ``list``/``get`` below
+# would shadow the caching layer the mixin provides.
+class BaseCatalogAdapter(BaseGrpcServiceAdapter):
+    service_name = "catalog"
+
+    def list(self, resource_class, page=1, page_size=25, filters=None):
+        ...
+        return PagedResult(items=items, total=total, page=page, page_size=page_size)
+
+    def get(self, resource_class, pk):
+        ...
+
+# Step 2: layer the caching mixin on top.  CachedAdapterMixin overrides
+# ``list``/``get`` to consult the cache, and inherits the actual gRPC
+# implementation from ``BaseCatalogAdapter`` via ``super()``.
+class CatalogAdapter(CachedAdapterMixin, BaseCatalogAdapter):
+    pass
+```
+
+The mixin is fully transparent: if caching is disabled globally, if the mixin is not in the adapter MRO, or if the instance sets `grpc_cache = None`, the adapter falls through to the base implementation unchanged. Cache keys are stable SHA-256 hashes of the sorted JSON-encoded kwargs, namespaced by the resource class and operation name, so two callers passing the same arguments in different order hit the same entry.
+
+**Override per adapter.** Set `grpc_cache = GrpcAdminCache(prefix="custom", ttl=120, enabled=True)` on the instance to use a different prefix, TTL, or backend than the global settings. The constructor of `GrpcAdminCache` never raises; an unknown backend silently disables caching.
+
+---
+
 ## Customizing Appearance
 
 ### Custom Widgets
@@ -573,6 +680,10 @@ Set these in your Django `settings.py`:
 | `GRPC_ADMIN_MAX_PAGE_SIZE` | `100` | Maximum items per page. |
 | `GRPC_ADMIN_CURSOR_PAGINATION` | `False` | Enable cursor-based pagination globally. |
 | `GRPC_ADMIN_LOG_LEVEL` | `"INFO"` | Log level for the package logger. |
+| `GRPC_ADMIN_CACHE_ENABLED` | `False` | Enable `CachedAdapterMixin` globally. |
+| `GRPC_ADMIN_CACHE_TTL` | `60` | Default TTL in seconds. |
+| `GRPC_ADMIN_CACHE_PREFIX` | `"grpc_admin"` | Cache-key namespace. |
+| `GRPC_ADMIN_CACHE_BACKEND` | `"default"` | Django `CACHES` alias. |
 | `DEFAULT_WIDGETS` | `None` | Dict mapping field type to widget class or dotted path. |
 | `DEFAULT_ADMIN_CLASS` | `django.contrib.admin.ModelAdmin` | Dotted path to the base `ModelAdmin` subclass. |
 | `DEFAULT_CHANGE_FORM_TEMPLATE` | `django_admin_grpc/change_form.html` | Template for add/change views. |

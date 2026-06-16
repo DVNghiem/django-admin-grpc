@@ -144,6 +144,179 @@ class BaseAsyncGrpcServiceAdapter(ABC):
         """Delete an entity via gRPC asynchronously."""
         raise NotImplementedError(f"{self.__class__.__name__} does not support delete")
 
+    # ── Bulk operations (chunked fallback) ────────────────────────────────
+
+    batch_size: int = 100
+
+    async def bulk_create(
+        self,
+        resource_class: type[BaseGrpcResource],
+        items: list[dict[str, Any]],
+        *,
+        batch_size: int | None = None,
+    ) -> list[BaseGrpcResource]:
+        """
+        Create multiple entities via gRPC, chunked.
+
+        The default implementation awaits ``create()`` per item in chunks of
+        ``batch_size`` (defaulting to ``self.batch_size``).  Adapters that
+        expose a true bulk create endpoint should override this.
+
+        On partial failure, raises :class:`GrpcBatchPartialError` with the
+        succeeded and failed entries.
+        """
+        from django_admin_grpc.exceptions import GrpcBatchPartialError
+        from django_admin_grpc.utils import chunked
+
+        if not items:
+            return []
+        size = batch_size if batch_size is not None else self.batch_size
+        created: list[BaseGrpcResource] = []
+        succeeded_inputs: list[dict[str, Any]] = []
+        failed: dict[int, Exception] = {}
+        # Resource name is included in logs so multiple resources can be
+        # disambiguated, but the raw input payload is intentionally not
+        # logged — it may contain sensitive fields.
+        resource_name = getattr(resource_class, "__name__", str(resource_class))
+        for chunk in chunked(items, size):
+            for data in chunk:
+                # Stable key: the index of the input across all chunks.
+                index = len(succeeded_inputs) + len(failed)
+                try:
+                    created.append(await self.create(resource_class, data))
+                    succeeded_inputs.append(data)
+                except Exception as exc:
+                    failed[index] = exc
+                    logger.warning(
+                        "gRPC async bulk_create failed for resource=%s index=%s: %s",
+                        resource_name,
+                        index,
+                        exc,
+                    )
+        if failed:
+            raise GrpcBatchPartialError(
+                "Async bulk create completed with failures",
+                succeeded=succeeded_inputs,
+                failed=failed,
+                operation="bulk_create",
+            )
+        return created
+
+    async def bulk_update(
+        self,
+        resource_class: type[BaseGrpcResource],
+        items: list[dict[str, Any]],
+        *,
+        batch_size: int | None = None,
+    ) -> list[BaseGrpcResource]:
+        """
+        Update multiple entities via gRPC, chunked.
+
+        Each *item* must include the primary key field.  The default
+        implementation awaits ``update()`` per item in chunks.  Adapters
+        that expose a true bulk update endpoint should override this.
+
+        On partial failure, raises :class:`GrpcBatchPartialError` with the
+        failed PKs and their exceptions.
+        """
+        from django_admin_grpc.exceptions import GrpcBatchPartialError
+        from django_admin_grpc.utils import chunked
+
+        if not items:
+            return []
+        size = batch_size if batch_size is not None else self.batch_size
+        pk_field = getattr(resource_class.Meta, "pk_field", "id") or "id"
+        updated: list[BaseGrpcResource] = []
+        succeeded_pks: list[Any] = []
+        failed: dict[Any, Exception] = {}
+        # Resource name is included in logs so multiple resources can be
+        # disambiguated, but the raw input payload is intentionally not
+        # logged — it may contain sensitive fields.
+        resource_name = getattr(resource_class, "__name__", str(resource_class))
+        for chunk in chunked(items, size):
+            for data in chunk:
+                pk = data.get(pk_field)
+                if pk is None:
+                    exc = ValueError(
+                        f"bulk_update item missing primary key field '{pk_field}'"
+                    )
+                    failed[pk] = exc
+                    logger.warning(
+                        "gRPC async bulk_update item missing pk for resource=%s pk_field=%s",
+                        resource_name,
+                        pk_field,
+                    )
+                    continue
+                try:
+                    updated.append(await self.update(resource_class, str(pk), data))
+                    succeeded_pks.append(pk)
+                except Exception as exc:
+                    failed[pk] = exc
+                    logger.warning(
+                        "gRPC async bulk_update failed for resource=%s pk=%s: %s",
+                        resource_name,
+                        pk,
+                        exc,
+                    )
+        if failed:
+            raise GrpcBatchPartialError(
+                "Async bulk update completed with failures",
+                succeeded=succeeded_pks,
+                failed=failed,
+                operation="bulk_update",
+            )
+        return updated
+
+    async def bulk_delete(
+        self,
+        resource_class: type[BaseGrpcResource],
+        pks: list[Any],
+        *,
+        batch_size: int | None = None,
+    ) -> dict[str, Any]:
+        """
+        Delete multiple entities by primary key, chunked.
+
+        The default implementation awaits ``delete()`` per PK in chunks. On
+        partial failure, raises :class:`GrpcBatchPartialError` and includes
+        the succeeded and failed PKs. On full success, returns a summary
+        mapping of the form ``{"deleted": int, "failed": list[Any]}`` where
+        ``failed`` is an empty list.
+        """
+        from django_admin_grpc.exceptions import GrpcBatchPartialError
+        from django_admin_grpc.utils import chunked
+
+        if not pks:
+            return {"deleted": 0, "failed": []}
+        size = batch_size if batch_size is not None else self.batch_size
+        succeeded_pks: list[Any] = []
+        failed: dict[Any, Exception] = {}
+        # Resource name is included in logs so multiple resources can be
+        # disambiguated.  ``bulk_delete`` only logs the PK (not a payload),
+        # but the resource name is kept consistent with bulk_create / update.
+        resource_name = getattr(resource_class, "__name__", str(resource_class))
+        for chunk in chunked(pks, size):
+            for pk in chunk:
+                try:
+                    await self.delete(resource_class, str(pk))
+                    succeeded_pks.append(pk)
+                except Exception as exc:
+                    failed[pk] = exc
+                    logger.warning(
+                        "gRPC async bulk_delete failed for resource=%s pk=%s: %s",
+                        resource_name,
+                        pk,
+                        exc,
+                    )
+        if failed:
+            raise GrpcBatchPartialError(
+                "Async bulk delete completed with failures",
+                succeeded=succeeded_pks,
+                failed=failed,
+                operation="bulk_delete",
+            )
+        return {"deleted": len(succeeded_pks), "failed": []}
+
     @property
     def supports_create(self) -> bool:
         return type(self).create is not BaseAsyncGrpcServiceAdapter.create

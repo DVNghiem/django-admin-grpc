@@ -7,17 +7,21 @@ from unittest.mock import Mock, patch
 
 import pytest
 from django.contrib.admin.sites import AdminSite
+from django.contrib.messages.storage.fallback import FallbackStorage
 from django.test import RequestFactory
 
 from django_admin_grpc.adapters import BaseGrpcServiceAdapter
 from django_admin_grpc.admin import (
     AsyncGrpcResourceAdmin,
+    BulkActionMixin,
     GrpcChangeList,
     GrpcResourceAdmin,
+    bulk_grpc_action,
     grpc_action,
     run_async,
 )
 from django_admin_grpc.async_adapter import BaseAsyncGrpcServiceAdapter
+from django_admin_grpc.exceptions import GrpcBatchPartialError
 from django_admin_grpc.models import GrpcFakeQuerySet
 from django_admin_grpc.paginator import PagedResult
 from django_admin_grpc.resources import (
@@ -51,6 +55,9 @@ class MockAdapter(BaseGrpcServiceAdapter):
 
     def __init__(self, items=None):
         self._items = items or []
+        self.updated: list[tuple[str, dict]] = []
+        self.deleted: list[str] = []
+        self.created: list[dict] = []
 
     def list(self, resource_class, page=1, page_size=25, filters=None):
         return PagedResult(
@@ -67,12 +74,15 @@ class MockAdapter(BaseGrpcServiceAdapter):
         return None
 
     def create(self, resource_class, data):
+        self.created.append(data)
         return ProductResource(**data)
 
     def update(self, resource_class, pk, data):
+        self.updated.append((str(pk), data))
         return ProductResource(id=pk, **data)
 
     def delete(self, resource_class, pk):
+        self.deleted.append(str(pk))
         return True
 
 
@@ -105,6 +115,14 @@ def no_create_admin():
 @pytest.fixture
 def request_factory():
     return RequestFactory()
+
+
+def _make_post_request() -> Any:
+    """Build a POST request with a fallback messages storage attached."""
+    request = RequestFactory().post("/")
+    request.session = {}  # type: ignore[attr-defined]
+    request._messages = FallbackStorage(request)  # type: ignore[attr-defined]
+    return request
 
 
 class TestGrpcResourceAdminInit:
@@ -2416,3 +2434,660 @@ class TestAsyncGrpcResourceAdmin:
         config = ItemResource.get_field_config("owner_id")
         result = admin.resolve_fk_value("owner_id", config, "7")
         assert result == "Owner-7"
+
+
+# ── BulkActionMixin tests ────────────────────────────────────────────────
+
+
+class BulkDeleteAdapter(BaseGrpcServiceAdapter):
+    """Adapter whose ``bulk_delete`` succeeds by default."""
+
+    service_name = "bulk_delete_items"
+
+    def __init__(self):
+        self.deleted: list[str] = []
+
+    def list(self, resource_class, page=1, page_size=25, filters=None):
+        return PagedResult(items=[])
+
+    def get(self, resource_class, pk):
+        return None
+
+    def delete(self, resource_class, pk):
+        self.deleted.append(pk)
+        return True
+
+
+class FailingBulkDeleteAdapter(BaseGrpcServiceAdapter):
+    """Adapter whose ``bulk_delete`` always raises ``GrpcBatchPartialError``."""
+
+    service_name = "failing_bulk_delete"
+
+    def list(self, resource_class, page=1, page_size=25, filters=None):
+        return PagedResult(items=[])
+
+    def get(self, resource_class, pk):
+        return None
+
+    def delete(self, resource_class, pk):
+        return True
+
+    def bulk_delete(self, resource_class, pks, *, batch_size=None):
+        raise GrpcBatchPartialError(
+            "partial",
+            succeeded=pks[:-1],
+            failed={pks[-1]: RuntimeError("nope")},
+            operation="bulk_delete",
+        )
+
+
+class TestBulkActionMixinRegisteredActions:
+    def test_bulk_delete_action_registered_when_can_delete(
+        self, admin_instance, reset_registry
+    ):
+        reset_registry.register("products", MockAdapter())
+        request = RequestFactory().get("/")
+        actions = admin_instance.get_actions(request)
+        assert "bulk_delete_action" in actions
+        assert "delete_selected" not in actions
+
+    def test_bulk_create_action_not_registered_by_default(
+        self, admin_instance, reset_registry
+    ):
+        reset_registry.register("products", MockAdapter())
+        request = RequestFactory().get("/")
+        actions = admin_instance.get_actions(request)
+        assert "bulk_create_action" not in actions
+
+    def test_bulk_update_action_not_registered_by_default(
+        self, admin_instance, reset_registry
+    ):
+        reset_registry.register("products", MockAdapter())
+        request = RequestFactory().get("/")
+        actions = admin_instance.get_actions(request)
+        assert "bulk_update_action" not in actions
+
+    def test_opt_in_bulk_create_action(self, reset_registry):
+        class OptInCreateAdmin(GrpcResourceAdmin):
+            resource_class = ProductResource
+            service_name = "products"
+            grpc_bulk_create_enabled = True
+            grpc_enable_create = True
+            grpc_form_fields = ["name"]
+
+        admin = OptInCreateAdmin(admin_site=AdminSite())
+        reset_registry.register("products", MockAdapter())
+        request = RequestFactory().get("/")
+        actions = admin.get_actions(request)
+        assert "bulk_create_action" in actions
+
+    def test_opt_in_bulk_update_action(self, reset_registry):
+        class OptInUpdateAdmin(GrpcResourceAdmin):
+            resource_class = ProductResource
+            service_name = "products"
+            grpc_bulk_update_enabled = True
+            grpc_enable_update = True
+            grpc_form_fields = ["name"]
+
+        admin = OptInUpdateAdmin(admin_site=AdminSite())
+        reset_registry.register("products", MockAdapter())
+        request = RequestFactory().get("/")
+        actions = admin.get_actions(request)
+        assert "bulk_update_action" in actions
+
+    def test_legacy_grpc_delete_selected_still_present(
+        self, admin_instance, reset_registry
+    ):
+        reset_registry.register("products", MockAdapter())
+        request = RequestFactory().get("/")
+        actions = admin_instance.get_actions(request)
+        assert "grpc_delete_selected" in actions
+
+    def test_resource_admin_inherits_bulk_action_mixin(self):
+        assert issubclass(GrpcResourceAdmin, BulkActionMixin)
+
+
+class TestBulkDeleteAction:
+    def test_bulk_delete_action_full_success(self, admin_instance, reset_registry):
+        adapter = BulkDeleteAdapter()
+        reset_registry.register("products", adapter)
+        admin_instance.adapter_class = adapter
+
+        request = RequestFactory().post("/")
+        qs = Mock()
+        qs._selected_pks = ["1", "2", "3"]
+
+        with patch("django.contrib.messages.success") as mock_success:
+            admin_instance.bulk_delete_action(request, qs)
+        mock_success.assert_called_once()
+        assert sorted(adapter.deleted) == ["1", "2", "3"]
+
+    def test_bulk_delete_action_partial_failure_posts_error(
+        self, admin_instance, reset_registry
+    ):
+        adapter = FailingBulkDeleteAdapter()
+        reset_registry.register("products", adapter)
+        admin_instance.adapter_class = adapter
+
+        request = RequestFactory().post("/")
+        qs = Mock()
+        qs._selected_pks = ["1", "2", "3"]
+
+        with patch("django.contrib.messages.error") as mock_error:
+            admin_instance.bulk_delete_action(request, qs)
+        # At least one error message should be posted (the summary).
+        assert mock_error.call_count >= 1
+
+    def test_bulk_delete_action_no_adapter(self, admin_instance):
+        request = RequestFactory().post("/")
+        qs = Mock()
+        qs._selected_pks = ["1"]
+
+        with patch("django.contrib.messages.error") as mock_error:
+            admin_instance.bulk_delete_action(request, qs)
+        mock_error.assert_called_once()
+
+    def test_bulk_delete_action_empty_selection(self, admin_instance, reset_registry):
+        adapter = BulkDeleteAdapter()
+        reset_registry.register("products", adapter)
+        admin_instance.adapter_class = adapter
+
+        request = RequestFactory().post("/")
+        qs = Mock()
+        qs._selected_pks = []
+
+        with patch("django.contrib.messages.success") as mock_success:
+            admin_instance.bulk_delete_action(request, qs)
+        assert adapter.deleted == []
+        # No success message when nothing was deleted.
+        mock_success.assert_not_called()
+
+
+class TestBulkCreateAction:
+    def test_bulk_create_action_success(self, reset_registry):
+        class CreateAdapter(BaseGrpcServiceAdapter):
+            service_name = "creates"
+            created: list = []
+
+            def list(self, resource_class, page=1, page_size=25, filters=None):
+                return PagedResult(items=[])
+
+            def get(self, resource_class, pk):
+                return None
+
+            def create(self, resource_class, data):
+                self.created.append(data)
+                return ProductResource(**data)
+
+        adapter = CreateAdapter()
+        reset_registry.register("products", adapter)
+
+        class CreateAdmin(GrpcResourceAdmin):
+            resource_class = ProductResource
+            adapter_class = adapter
+            grpc_bulk_create_enabled = True
+            grpc_enable_create = True
+            grpc_form_fields = ["name"]
+            actions = ["bulk_create_action"]
+
+        admin = CreateAdmin(admin_site=AdminSite())
+        request = _make_post_request()
+        qs = Mock()
+        qs._selected_pks = ["1", "2"]
+
+        with patch("django.contrib.messages.success") as mock_success:
+            action_func = admin.get_actions(request)["bulk_create_action"][0]
+            action_func(admin, request, qs)
+        assert len(adapter.created) == 2
+        mock_success.assert_called_once()
+
+    def test_bulk_create_action_partial_failure(self, reset_registry):
+        class PartialCreateAdapter(BaseGrpcServiceAdapter):
+            service_name = "partial_creates"
+            created: list = []
+
+            def list(self, resource_class, page=1, page_size=25, filters=None):
+                return PagedResult(items=[])
+
+            def get(self, resource_class, pk):
+                return None
+
+            def create(self, resource_class, data):
+                # Fail on the 2nd and 3rd items.
+                if data.get("id") in (2, 3):
+                    raise RuntimeError("nope")
+                self.created.append(data)
+                return ProductResource(**data)
+
+        adapter = PartialCreateAdapter()
+        reset_registry.register("products", adapter)
+
+        class CreateAdmin(GrpcResourceAdmin):
+            resource_class = ProductResource
+            adapter_class = adapter
+            grpc_bulk_create_enabled = True
+            grpc_enable_create = True
+            grpc_form_fields = ["name"]
+            actions = ["bulk_create_action"]
+
+            def build_bulk_create_payload(self, request, queryset):
+                # Use a payload that varies per item so the failing IDs
+                # actually map to items 2 and 3.
+                pks = self.get_grpc_selected_pks(request, queryset)
+                return [{"id": int(pk)} for pk in pks]
+
+        admin = CreateAdmin(admin_site=AdminSite())
+        request = _make_post_request()
+        qs = Mock()
+        qs._selected_pks = ["1", "2", "3"]
+
+        with patch("django.contrib.messages.warning") as mock_warn:
+            action_func = admin.get_actions(request)["bulk_create_action"][0]
+            action_func(admin, request, qs)
+        # At least one warning is posted (partial failure summary).
+        assert mock_warn.call_count >= 1
+        # Only the first item (id=1) was actually created.
+        assert len(adapter.created) == 1
+
+    def test_bulk_create_action_runs_async_adapter(self, reset_async_registry):
+        """bulk_create_action must await async adapters via run_async."""
+
+        class AsyncCreateAdapter(BaseAsyncGrpcServiceAdapter):
+            service_name = "async_creates"
+            target = "svc:50051"
+
+            def __init__(self):
+                super().__init__()
+                self.created: list[dict] = []
+
+            async def list(self, resource_class, page=1, page_size=25, filters=None):
+                return PagedResult(items=[])
+
+            async def get(self, resource_class, pk):
+                return None
+
+            async def create(self, resource_class, data):
+                self.created.append(data)
+                return resource_class(**data)
+
+        adapter = AsyncCreateAdapter()
+        reset_async_registry.register("async_creates", adapter)
+
+        class CreateAdmin(AsyncGrpcResourceAdmin):
+            resource_class = ProductResource
+            service_name = "async_creates"
+            grpc_bulk_create_enabled = True
+            grpc_enable_create = True
+            grpc_form_fields = ["name"]
+            actions = ["bulk_create_action"]
+
+        admin = CreateAdmin(admin_site=AdminSite())
+        request = _make_post_request()
+        qs = Mock()
+        qs._selected_pks = ["1", "2"]
+
+        with patch("django.contrib.messages.success") as mock_success:
+            action_func = admin.get_actions(request)["bulk_create_action"][0]
+            action_func(admin, request, qs)
+        # Async ``create`` was awaited for both items, not left as a coroutine.
+        assert len(adapter.created) == 2
+        mock_success.assert_called_once()
+
+    def test_bulk_create_action_async_partial_failure(self, reset_async_registry):
+        """Async bulk_create_action must surface partial failures via messages."""
+
+        class PartialAsyncCreateAdapter(BaseAsyncGrpcServiceAdapter):
+            service_name = "async_partial_creates"
+            target = "svc:50051"
+
+            def __init__(self):
+                super().__init__()
+                self.created: list[dict] = []
+
+            async def list(self, resource_class, page=1, page_size=25, filters=None):
+                return PagedResult(items=[])
+
+            async def get(self, resource_class, pk):
+                return None
+
+            async def create(self, resource_class, data):
+                if data.get("id") in (2, 3):
+                    raise RuntimeError("nope")
+                self.created.append(data)
+                return resource_class(**data)
+
+        adapter = PartialAsyncCreateAdapter()
+        reset_async_registry.register("async_partial_creates", adapter)
+
+        class CreateAdmin(AsyncGrpcResourceAdmin):
+            resource_class = ProductResource
+            service_name = "async_partial_creates"
+            grpc_bulk_create_enabled = True
+            grpc_enable_create = True
+            grpc_form_fields = ["name"]
+            actions = ["bulk_create_action"]
+
+            def build_bulk_create_payload(self, request, queryset):
+                pks = self.get_grpc_selected_pks(request, queryset)
+                return [{"id": int(pk)} for pk in pks]
+
+        admin = CreateAdmin(admin_site=AdminSite())
+        request = _make_post_request()
+        qs = Mock()
+        qs._selected_pks = ["1", "2", "3"]
+
+        with patch("django.contrib.messages.warning") as mock_warn:
+            action_func = admin.get_actions(request)["bulk_create_action"][0]
+            action_func(admin, request, qs)
+        assert mock_warn.call_count >= 1
+        # Only the first item (id=1) was actually created.
+        assert len(adapter.created) == 1
+
+
+class TestBulkUpdateAction:
+    def test_bulk_update_action_success(self, reset_registry):
+        class UpdateAdapter(BaseGrpcServiceAdapter):
+            service_name = "updates"
+            updated: list = []
+
+            def list(self, resource_class, page=1, page_size=25, filters=None):
+                return PagedResult(items=[])
+
+            def get(self, resource_class, pk):
+                return None
+
+            def update(self, resource_class, pk, data):
+                self.updated.append((pk, data))
+                return ProductResource(**data)
+
+        adapter = UpdateAdapter()
+        reset_registry.register("products", adapter)
+
+        class UpdateAdmin(GrpcResourceAdmin):
+            resource_class = ProductResource
+            adapter_class = adapter
+            grpc_bulk_update_enabled = True
+            grpc_enable_update = True
+            grpc_form_fields = ["name"]
+            actions = ["bulk_update_action"]
+
+            def build_bulk_update_payload(self, request, queryset):
+                pks = self.get_grpc_selected_pks(request, queryset)
+                return [{"id": pk, "active": True} for pk in pks]
+
+        admin = UpdateAdmin(admin_site=AdminSite())
+        request = _make_post_request()
+        qs = Mock()
+        qs._selected_pks = ["1", "2"]
+
+        with patch("django.contrib.messages.success") as mock_success:
+            action_func = admin.get_actions(request)["bulk_update_action"][0]
+            action_func(admin, request, qs)
+        assert len(adapter.updated) == 2
+        mock_success.assert_called_once()
+
+    def test_bulk_update_action_runs_async_adapter(self, reset_async_registry):
+        """bulk_update_action must await async adapters via run_async."""
+
+        class AsyncUpdateAdapter(BaseAsyncGrpcServiceAdapter):
+            service_name = "async_updates"
+            target = "svc:50051"
+
+            def __init__(self):
+                super().__init__()
+                self.updated: list[tuple[str, dict]] = []
+
+            async def list(self, resource_class, page=1, page_size=25, filters=None):
+                return PagedResult(items=[])
+
+            async def get(self, resource_class, pk):
+                return None
+
+            async def update(self, resource_class, pk, data):
+                self.updated.append((pk, data))
+                return resource_class(**data)
+
+        adapter = AsyncUpdateAdapter()
+        reset_async_registry.register("async_updates", adapter)
+
+        class UpdateAdmin(AsyncGrpcResourceAdmin):
+            resource_class = ProductResource
+            service_name = "async_updates"
+            grpc_bulk_update_enabled = True
+            grpc_enable_update = True
+            grpc_form_fields = ["name"]
+            actions = ["bulk_update_action"]
+
+            def build_bulk_update_payload(self, request, queryset):
+                pks = self.get_grpc_selected_pks(request, queryset)
+                return [{"id": pk, "active": True} for pk in pks]
+
+        admin = UpdateAdmin(admin_site=AdminSite())
+        request = _make_post_request()
+        qs = Mock()
+        qs._selected_pks = ["1", "2"]
+
+        with patch("django.contrib.messages.success") as mock_success:
+            action_func = admin.get_actions(request)["bulk_update_action"][0]
+            action_func(admin, request, qs)
+        # Async ``update`` was awaited for both items, not left as a coroutine.
+        assert len(adapter.updated) == 2
+        mock_success.assert_called_once()
+
+    def test_bulk_update_action_async_partial_failure(self, reset_async_registry):
+        """Async bulk_update_action must surface partial failures via messages."""
+
+        class PartialAsyncUpdateAdapter(BaseAsyncGrpcServiceAdapter):
+            service_name = "async_partial_updates"
+            target = "svc:50051"
+
+            def __init__(self):
+                super().__init__()
+                self.updated: list[tuple[str, dict]] = []
+
+            async def list(self, resource_class, page=1, page_size=25, filters=None):
+                return PagedResult(items=[])
+
+            async def get(self, resource_class, pk):
+                return None
+
+            async def update(self, resource_class, pk, data):
+                if str(pk) == "2":
+                    raise RuntimeError("nope")
+                self.updated.append((pk, data))
+                return resource_class(**data)
+
+        adapter = PartialAsyncUpdateAdapter()
+        reset_async_registry.register("async_partial_updates", adapter)
+
+        class UpdateAdmin(AsyncGrpcResourceAdmin):
+            resource_class = ProductResource
+            service_name = "async_partial_updates"
+            grpc_bulk_update_enabled = True
+            grpc_enable_update = True
+            grpc_form_fields = ["name"]
+            actions = ["bulk_update_action"]
+
+            def build_bulk_update_payload(self, request, queryset):
+                pks = self.get_grpc_selected_pks(request, queryset)
+                return [{"id": pk, "active": True} for pk in pks]
+
+        admin = UpdateAdmin(admin_site=AdminSite())
+        request = _make_post_request()
+        qs = Mock()
+        qs._selected_pks = ["1", "2"]
+
+        with patch("django.contrib.messages.warning") as mock_warn:
+            action_func = admin.get_actions(request)["bulk_update_action"][0]
+            action_func(admin, request, qs)
+        assert mock_warn.call_count >= 1
+        assert len(adapter.updated) == 1
+
+
+class TestApplyGrpcBulkDelete:
+    def test_returns_summary_dict_on_success(
+        self, admin_instance, reset_registry
+    ):
+        adapter = BulkDeleteAdapter()
+        reset_registry.register("products", adapter)
+        admin_instance.adapter_class = adapter
+
+        request = RequestFactory().post("/")
+        qs = Mock()
+        qs._selected_pks = ["1", "2"]
+
+        with patch("django.contrib.messages.success"):
+            result = admin_instance.apply_grpc_bulk_delete(request, qs)
+        assert result == {"deleted": 2, "failed": []}
+
+    def test_returns_none_on_partial_failure(
+        self, admin_instance, reset_registry
+    ):
+        adapter = FailingBulkDeleteAdapter()
+        reset_registry.register("products", adapter)
+        admin_instance.adapter_class = adapter
+
+        request = RequestFactory().post("/")
+        qs = Mock()
+        qs._selected_pks = ["1", "2", "3"]
+
+        with patch("django.contrib.messages.error") as mock_error:
+            result = admin_instance.apply_grpc_bulk_delete(request, qs)
+        assert result is None
+        assert mock_error.call_count >= 1
+
+    def test_accepts_pk_list_directly(self, admin_instance, reset_registry):
+        adapter = BulkDeleteAdapter()
+        reset_registry.register("products", adapter)
+        admin_instance.adapter_class = adapter
+
+        request = RequestFactory().post("/")
+        with patch("django.contrib.messages.success"):
+            result = admin_instance.apply_grpc_bulk_delete(request, ["5", "6"])
+        assert result == {"deleted": 2, "failed": []}
+        assert sorted(adapter.deleted) == ["5", "6"]
+
+    def test_no_adapter_posts_error(self, admin_instance):
+        request = RequestFactory().post("/")
+        with patch("django.contrib.messages.error") as mock_error:
+            result = admin_instance.apply_grpc_bulk_delete(request, ["1"])
+        assert result is None
+        mock_error.assert_called_once()
+
+    def test_empty_selection_returns_empty_summary(
+        self, admin_instance, reset_registry
+    ):
+        adapter = BulkDeleteAdapter()
+        reset_registry.register("products", adapter)
+        admin_instance.adapter_class = adapter
+
+        request = RequestFactory().post("/")
+        qs = Mock()
+        qs._selected_pks = []
+
+        result = admin_instance.apply_grpc_bulk_delete(request, qs)
+        assert result == {"deleted": 0, "failed": []}
+
+
+class TestBulkGrpcActionDecorator:
+    def test_basic_invocation(self):
+        """@bulk_grpc_action sets field on selected PKs."""
+        received: list[tuple[str, list]] = []
+
+        adapter = MockAdapter()
+
+        class ActionAdmin(GrpcResourceAdmin):
+            resource_class = ProductResource
+            adapter_class = adapter
+            actions = ["bulk_activate"]
+
+            @bulk_grpc_action(description="Activate", field="active", value=True)
+            def bulk_activate(self, request, selected_pks):
+                received.append((self._resource_class.__name__, list(selected_pks)))
+
+        admin = ActionAdmin(admin_site=AdminSite())
+        request = _make_post_request()
+        qs = Mock()
+        qs._selected_pks = ["1", "2", "3"]
+
+        action_func = admin.get_actions(request)["bulk_activate"][0]
+        action_func(admin, request, qs)
+
+        # Custom body was invoked.
+        assert received == [("ProductResource", ["1", "2", "3"])]
+        # The decorator's auto-update was applied to each selected PK.
+        assert len(adapter.updated) == 3
+        # Every update carried the field/value the decorator injected.
+        for _pk, data in adapter.updated:
+            assert data == {"active": True}
+
+    def test_bare_decorator(self):
+        """@bulk_grpc_action (no parens) still wraps the function."""
+        called = []
+
+        class ActionAdmin(GrpcResourceAdmin):
+            resource_class = ProductResource
+            adapter_class = MockAdapter()
+            actions = ["do_something"]
+
+            @bulk_grpc_action
+            def do_something(self, request, selected_pks):
+                called.append(selected_pks)
+
+        admin = ActionAdmin(admin_site=AdminSite())
+        request = RequestFactory().post("/")
+        qs = Mock()
+        qs._selected_pks = ["1"]
+
+        action_func = admin.get_actions(request)["do_something"][0]
+        action_func(admin, request, qs)
+        assert called == [["1"]]
+
+    def test_description_appears_in_get_actions(self):
+        class ActionAdmin(GrpcResourceAdmin):
+            resource_class = ProductResource
+            adapter_class = MockAdapter()
+            actions = ["my_action"]
+
+            @bulk_grpc_action(description="My custom bulk", field="active", value=True)
+            def my_action(self, request, selected_pks):
+                pass
+
+        admin = ActionAdmin(admin_site=AdminSite())
+        request = RequestFactory().get("/")
+        actions = admin.get_actions(request)
+        _func, name, description = actions["my_action"]
+        assert name == "my_action"
+        assert description == "My custom bulk"
+
+    def test_default_description_from_method_name(self):
+        class ActionAdmin(GrpcResourceAdmin):
+            resource_class = ProductResource
+            adapter_class = MockAdapter()
+            actions = ["bulk_activate"]
+
+            @bulk_grpc_action(field="active", value=True)
+            def bulk_activate(self, request, selected_pks):
+                pass
+
+        admin = ActionAdmin(admin_site=AdminSite())
+        request = RequestFactory().get("/")
+        actions = admin.get_actions(request)
+        _func, name, description = actions["bulk_activate"]
+        assert "bulk activate" in description.lower()
+
+    def test_metadata_attributes_recorded(self):
+        class ActionAdmin(GrpcResourceAdmin):
+            resource_class = ProductResource
+            adapter_class = MockAdapter()
+            actions = ["a"]
+
+            @bulk_grpc_action(field="active", value=False)
+            def a(self, request, selected_pks):
+                pass
+
+        admin = ActionAdmin(admin_site=AdminSite())
+        request = RequestFactory().get("/")
+        func = admin.get_actions(request)["a"][0]
+        assert func.grpc_bulk_field == "active"
+        assert func.grpc_bulk_value is False
