@@ -183,10 +183,11 @@ class TestGrpcChannelPoolHealth:
         assert pool._health_thread is not None
 
         # Wait for the background thread to evict the idle channel.
-        for _ in range(50):
-            if pool.metrics()["evicted_total"] > 0:
-                break
-            time.sleep(0.01)
+        with patch_channel_ready_future(ready=True):
+            for _ in range(50):
+                if pool.metrics()["evicted_total"] > 0:
+                    break
+                time.sleep(0.01)
 
         pool.close_all()
         assert pool.metrics()["evicted_total"] == 1

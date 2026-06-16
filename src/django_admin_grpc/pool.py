@@ -171,6 +171,7 @@ class GrpcChannelPool:
                 healthy = False
 
             if healthy:
+                wrapper.last_used = time.monotonic()
                 with self._lock:
                     self._pool.append(wrapper)
                 self._semaphore.release()
