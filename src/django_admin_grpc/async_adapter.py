@@ -237,9 +237,7 @@ class BaseAsyncGrpcServiceAdapter(ABC):
             for data in chunk:
                 pk = data.get(pk_field)
                 if pk is None:
-                    exc = ValueError(
-                        f"bulk_update item missing primary key field '{pk_field}'"
-                    )
+                    exc = ValueError(f"bulk_update item missing primary key field '{pk_field}'")
                     failed[pk] = exc
                     logger.warning(
                         "gRPC async bulk_update item missing pk for resource=%s pk_field=%s",

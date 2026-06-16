@@ -1,6 +1,7 @@
 """
 Tests for django_admin_grpc.async_adapter module.
 """
+
 import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
@@ -76,8 +77,9 @@ class TestEnsureAioInitialized:
         init = Mock(side_effect=RuntimeError("boom"))
 
         async def _call():
-            with patch.object(grpc.aio, "init_grpc_aio", init), pytest.raises(
-                RuntimeError, match="boom"
+            with (
+                patch.object(grpc.aio, "init_grpc_aio", init),
+                pytest.raises(RuntimeError, match="boom"),
             ):
                 ensure_aio_initialized()
 
@@ -141,7 +143,9 @@ class TestBaseAsyncGrpcServiceAdapter:
     async def test_channel_created_lazily_insecure(self):
         adapter = MinimalAsyncAdapter()
         mock_channel = AsyncMock(spec=grpc.aio.Channel)
-        with patch("django_admin_grpc.async_adapter.grpc.aio.insecure_channel", return_value=mock_channel):
+        with patch(
+            "django_admin_grpc.async_adapter.grpc.aio.insecure_channel", return_value=mock_channel
+        ):
             channel = await adapter.channel()
             assert channel is mock_channel
 
@@ -151,14 +155,18 @@ class TestBaseAsyncGrpcServiceAdapter:
 
         adapter = SecureAdapter()
         mock_channel = AsyncMock(spec=grpc.aio.Channel)
-        with patch("django_admin_grpc.async_adapter.grpc.aio.secure_channel", return_value=mock_channel):
+        with patch(
+            "django_admin_grpc.async_adapter.grpc.aio.secure_channel", return_value=mock_channel
+        ):
             channel = await adapter.channel()
             assert channel is mock_channel
 
     async def test_channel_is_cached(self):
         adapter = MinimalAsyncAdapter()
         mock_channel = AsyncMock(spec=grpc.aio.Channel)
-        with patch("django_admin_grpc.async_adapter.grpc.aio.insecure_channel", return_value=mock_channel):
+        with patch(
+            "django_admin_grpc.async_adapter.grpc.aio.insecure_channel", return_value=mock_channel
+        ):
             ch1 = await adapter.channel()
             ch2 = await adapter.channel()
             assert ch1 is ch2 is mock_channel

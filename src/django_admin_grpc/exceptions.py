@@ -126,18 +126,14 @@ class GrpcBatchPartialError(GrpcAdminError):
             details=details,
         )
         self.succeeded: list[Any] = list(succeeded or [])
-        self.failed: dict[Any, Exception] | list[Any] = (
-            failed if failed is not None else {}
-        )
+        self.failed: dict[Any, Exception] | list[Any] = failed if failed is not None else {}
         self.operation: str | None = operation
 
     def __str__(self) -> str:
         parts = [self.message]
         if self.operation:
             parts.append(f"(operation={self.operation})")
-        parts.append(
-            f"(succeeded={len(self.succeeded)} failed={len(self.failed)})"
-        )
+        parts.append(f"(succeeded={len(self.succeeded)} failed={len(self.failed)})")
         if self.code:
             parts.append(f"(code={self.code})")
         if self.grpc_code:
@@ -215,4 +211,3 @@ def get_grpc_error_message(exc: GrpcAdminError) -> tuple[int, str]:
     if isinstance(exc, GrpcDeadlineExceededError):
         return messages.ERROR, exc.message or "Request timed out"
     return messages.ERROR, exc.message or "An error occurred"
-

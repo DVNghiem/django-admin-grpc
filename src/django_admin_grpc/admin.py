@@ -139,9 +139,7 @@ def bulk_grpc_action(
             selected_pks = self.get_grpc_selected_pks(request, queryset)
             # Apply the field/value update first; the body can layer on top.
             if field:
-                self.apply_grpc_bulk_update(
-                    request, selected_pks, {field: value}
-                )
+                self.apply_grpc_bulk_update(request, selected_pks, {field: value})
             return func(self, request, selected_pks)
 
         wrapper.short_description = description or getattr(  # type: ignore[attr-defined]
@@ -386,8 +384,7 @@ class BulkActionMixin:
         failed_count = len(exc.failed)
         messages.error(
             request,
-            f"Deleted {deleted} of "
-            f"{deleted + failed_count} record(s); {failed_count} failed.",
+            f"Deleted {deleted} of {deleted + failed_count} record(s); {failed_count} failed.",
         )
         failed_items: Any = exc.failed
         if isinstance(failed_items, dict):
@@ -1230,16 +1227,16 @@ class GrpcResourceAdmin(BulkActionMixin, ModelAdmin):
             # to the row resource class for backward compatibility.
             related_resource_class = fc.resource_class or self._resource_class
 
-            has_custom_batch_get = (
-                hasattr(adapter, "batch_get")
-                and getattr(type(adapter), "batch_get", None)
-                not in (BaseGrpcServiceAdapter.batch_get, BaseAsyncGrpcServiceAdapter.batch_get)
-            )
+            has_custom_batch_get = hasattr(adapter, "batch_get") and getattr(
+                type(adapter), "batch_get", None
+            ) not in (BaseGrpcServiceAdapter.batch_get, BaseAsyncGrpcServiceAdapter.batch_get)
 
             resolved: dict[Any, Any] = {}
             if has_custom_batch_get:
                 try:
-                    resolved = self._adapter_batch_get(adapter, related_resource_class, list(fk_ids))
+                    resolved = self._adapter_batch_get(
+                        adapter, related_resource_class, list(fk_ids)
+                    )
                 except Exception as exc:
                     logger.warning("Failed to batch_get FK values for field %s: %s", fc.name, exc)
                     continue

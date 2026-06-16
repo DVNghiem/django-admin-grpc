@@ -1,6 +1,7 @@
 """
 Tests for django_admin_grpc.filters module.
 """
+
 from unittest.mock import Mock
 
 import pytest
@@ -42,58 +43,42 @@ def mock_changelist():
 
 class TestGrpcFieldListFilter:
     def test_init(self, fake_field, mock_request):
-        f = GrpcFieldListFilter(
-            fake_field, mock_request, {}, Mock(), Mock(), "status"
-        )
+        f = GrpcFieldListFilter(fake_field, mock_request, {}, Mock(), Mock(), "status")
         assert f.field_path == "status"
         assert f.title == "Status"
 
     def test_init_fallback_title(self, mock_request):
         field = Mock()
         field.verbose_name = None
-        f = GrpcFieldListFilter(
-            field, mock_request, {}, Mock(), Mock(), "created_at"
-        )
+        f = GrpcFieldListFilter(field, mock_request, {}, Mock(), Mock(), "created_at")
         assert f.title == "Created At"
 
     def test_expected_parameters(self, fake_field, mock_request):
-        f = GrpcFieldListFilter(
-            fake_field, mock_request, {}, Mock(), Mock(), "status"
-        )
+        f = GrpcFieldListFilter(fake_field, mock_request, {}, Mock(), Mock(), "status")
         assert f.expected_parameters() == ["status", "status__exact"]
 
     def test_choices_empty(self, fake_field, mock_request, mock_changelist):
-        f = GrpcFieldListFilter(
-            fake_field, mock_request, {}, Mock(), Mock(), "status"
-        )
+        f = GrpcFieldListFilter(fake_field, mock_request, {}, Mock(), Mock(), "status")
         assert list(f.choices(mock_changelist)) == []
 
 
 class TestGrpcBooleanFieldListFilter:
     def test_init_no_value(self, fake_field, mock_request):
-        f = GrpcBooleanFieldListFilter(
-            fake_field, mock_request, {}, Mock(), Mock(), "active"
-        )
+        f = GrpcBooleanFieldListFilter(fake_field, mock_request, {}, Mock(), Mock(), "active")
         assert f.lookup_kwarg == "active__exact"
         assert f.lookup_val is None
 
     def test_init_with_value(self, fake_field, mock_request):
         mock_request.GET = {"active__exact": "1"}
-        f = GrpcBooleanFieldListFilter(
-            fake_field, mock_request, {}, Mock(), Mock(), "active"
-        )
+        f = GrpcBooleanFieldListFilter(fake_field, mock_request, {}, Mock(), Mock(), "active")
         assert f.lookup_val == "1"
 
     def test_expected_parameters(self, fake_field, mock_request):
-        f = GrpcBooleanFieldListFilter(
-            fake_field, mock_request, {}, Mock(), Mock(), "active"
-        )
+        f = GrpcBooleanFieldListFilter(fake_field, mock_request, {}, Mock(), Mock(), "active")
         assert f.expected_parameters() == ["active__exact"]
 
     def test_choices(self, fake_field, mock_request, mock_changelist):
-        f = GrpcBooleanFieldListFilter(
-            fake_field, mock_request, {}, Mock(), Mock(), "active"
-        )
+        f = GrpcBooleanFieldListFilter(fake_field, mock_request, {}, Mock(), Mock(), "active")
         choices = list(f.choices(mock_changelist))
         assert len(choices) == 3
         assert choices[0]["display"] == "All"
@@ -105,9 +90,7 @@ class TestGrpcBooleanFieldListFilter:
 
     def test_choices_selected_yes(self, fake_field, mock_request, mock_changelist):
         mock_request.GET = {"active__exact": "1"}
-        f = GrpcBooleanFieldListFilter(
-            fake_field, mock_request, {}, Mock(), Mock(), "active"
-        )
+        f = GrpcBooleanFieldListFilter(fake_field, mock_request, {}, Mock(), Mock(), "active")
         choices = list(f.choices(mock_changelist))
         assert choices[0]["selected"] is False
         assert choices[1]["selected"] is True
@@ -168,35 +151,25 @@ class TestGrpcSimpleListFilter:
 
 class TestGrpcTextInputFilter:
     def test_init_no_value(self, fake_field, mock_request):
-        f = GrpcTextInputFilter(
-            fake_field, mock_request, {}, Mock(), Mock(), "name"
-        )
+        f = GrpcTextInputFilter(fake_field, mock_request, {}, Mock(), Mock(), "name")
         assert f.lookup_kwarg == "name"
         assert f.lookup_val == ""
         assert f.title == "Status"  # from fake_field.verbose_name
 
     def test_init_with_value(self, fake_field):
-        f = GrpcTextInputFilter(
-            fake_field, Mock(), {"name": "widget"}, Mock(), Mock(), "name"
-        )
+        f = GrpcTextInputFilter(fake_field, Mock(), {"name": "widget"}, Mock(), Mock(), "name")
         assert f.lookup_val == "widget"
 
     def test_expected_parameters(self, fake_field, mock_request):
-        f = GrpcTextInputFilter(
-            fake_field, mock_request, {}, Mock(), Mock(), "name"
-        )
+        f = GrpcTextInputFilter(fake_field, mock_request, {}, Mock(), Mock(), "name")
         assert f.expected_parameters() == ["name"]
 
     def test_has_output(self, fake_field, mock_request):
-        f = GrpcTextInputFilter(
-            fake_field, mock_request, {}, Mock(), Mock(), "name"
-        )
+        f = GrpcTextInputFilter(fake_field, mock_request, {}, Mock(), Mock(), "name")
         assert f.has_output() is True
 
     def test_choices(self, fake_field, mock_request, mock_changelist):
-        f = GrpcTextInputFilter(
-            fake_field, mock_request, {"name": "abc"}, Mock(), Mock(), "name"
-        )
+        f = GrpcTextInputFilter(fake_field, mock_request, {"name": "abc"}, Mock(), Mock(), "name")
         choices = list(f.choices(mock_changelist))
         assert len(choices) == 1
         assert choices[0]["name"] == "name"
@@ -205,9 +178,7 @@ class TestGrpcTextInputFilter:
 
 class TestGrpcNumberRangeFilter:
     def test_init_no_value(self, fake_field, mock_request):
-        f = GrpcNumberRangeFilter(
-            fake_field, mock_request, {}, Mock(), Mock(), "price"
-        )
+        f = GrpcNumberRangeFilter(fake_field, mock_request, {}, Mock(), Mock(), "price")
         assert f.lookup_val_gte == ""
         assert f.lookup_val_lte == ""
 
@@ -224,15 +195,11 @@ class TestGrpcNumberRangeFilter:
         assert f.lookup_val_lte == "100"
 
     def test_expected_parameters(self, fake_field, mock_request):
-        f = GrpcNumberRangeFilter(
-            fake_field, mock_request, {}, Mock(), Mock(), "price"
-        )
+        f = GrpcNumberRangeFilter(fake_field, mock_request, {}, Mock(), Mock(), "price")
         assert f.expected_parameters() == ["price__gte", "price__lte"]
 
     def test_has_output(self, fake_field, mock_request):
-        f = GrpcNumberRangeFilter(
-            fake_field, mock_request, {}, Mock(), Mock(), "price"
-        )
+        f = GrpcNumberRangeFilter(fake_field, mock_request, {}, Mock(), Mock(), "price")
         assert f.has_output() is True
 
     def test_choices(self, fake_field, mock_request, mock_changelist):
@@ -254,9 +221,7 @@ class TestGrpcNumberRangeFilter:
 
 class TestGrpcDateRangeFilter:
     def test_init_no_value(self, fake_field, mock_request):
-        f = GrpcDateRangeFilter(
-            fake_field, mock_request, {}, Mock(), Mock(), "created_at"
-        )
+        f = GrpcDateRangeFilter(fake_field, mock_request, {}, Mock(), Mock(), "created_at")
         assert f.lookup_val_gte == ""
         assert f.lookup_val_lte == ""
 
@@ -273,9 +238,7 @@ class TestGrpcDateRangeFilter:
         assert f.lookup_val_lte == "2024-12-31"
 
     def test_expected_parameters(self, fake_field, mock_request):
-        f = GrpcDateRangeFilter(
-            fake_field, mock_request, {}, Mock(), Mock(), "created_at"
-        )
+        f = GrpcDateRangeFilter(fake_field, mock_request, {}, Mock(), Mock(), "created_at")
         assert f.expected_parameters() == ["created_at__gte", "created_at__lte"]
 
     def test_choices(self, fake_field, mock_request, mock_changelist):

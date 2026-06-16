@@ -1,6 +1,7 @@
 """
 Tests for django_admin_grpc.utils module.
 """
+
 from collections.abc import Iterator
 
 import pytest

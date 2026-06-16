@@ -1,6 +1,7 @@
 """
 Paginator and result types for gRPC-backed list views.
 """
+
 from __future__ import annotations
 
 import hashlib

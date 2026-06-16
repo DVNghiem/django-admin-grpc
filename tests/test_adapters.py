@@ -1,6 +1,7 @@
 """
 Tests for django_admin_grpc.adapters module.
 """
+
 from typing import Any
 from unittest.mock import Mock, patch
 
@@ -189,39 +190,36 @@ class TestBaseGrpcServiceAdapterHelpers:
 
         with patch("django_admin_grpc.adapters.grpc.intercept_channel") as mock_intercept:
             mock_intercept.return_value = Mock(spec=grpc.Channel)
-            with patch.object(
-                adapter, "_trace_context_provider", return_value=lambda: {}
-            ):
+            with patch.object(adapter, "_trace_context_provider", return_value=lambda: {}):
                 result = adapter._wrap_channel(mock_channel)
                 mock_intercept.assert_called_once()
                 assert result is mock_intercept.return_value
 
     def test_trace_context_provider_none(self):
         adapter = MinimalAdapter()
-        with patch(
-            "django_admin_grpc.settings.get_setting", return_value=None
-        ):
+        with patch("django_admin_grpc.settings.get_setting", return_value=None):
             provider = adapter._trace_context_provider()
             assert provider() == {}
 
     def test_trace_context_provider_callable(self):
         adapter = MinimalAdapter()
         fn = lambda: {"x-trace-id": "abc"}  # noqa: E731
-        with patch(
-            "django_admin_grpc.settings.get_setting", return_value=fn
-        ):
+        with patch("django_admin_grpc.settings.get_setting", return_value=fn):
             provider = adapter._trace_context_provider()
             assert provider is fn
 
     def test_trace_context_provider_dotted_path(self):
         adapter = MinimalAdapter()
-        with patch(
-            "django_admin_grpc.settings.get_setting",
-            return_value="tests.test_adapters.dummy_provider",
-        ), patch(
-            "django.utils.module_loading.import_string",
-            return_value=lambda: {"x-trace-id": "xyz"},
-        ) as mock_import:
+        with (
+            patch(
+                "django_admin_grpc.settings.get_setting",
+                return_value="tests.test_adapters.dummy_provider",
+            ),
+            patch(
+                "django.utils.module_loading.import_string",
+                return_value=lambda: {"x-trace-id": "xyz"},
+            ) as mock_import,
+        ):
             provider = adapter._trace_context_provider()
             mock_import.assert_called_once_with("tests.test_adapters.dummy_provider")
             assert provider() == {"x-trace-id": "xyz"}
@@ -371,9 +369,7 @@ class TestBulkCreate:
         ):
             adapter.bulk_create(BulkResource, items)
         # At least one warning was logged for the failure.
-        assert any(
-            "bulk_create" in record.message for record in caplog.records
-        )
+        assert any("bulk_create" in record.message for record in caplog.records)
         # The log message and any of its arguments must not include the
         # sensitive payload values.
         joined = "\n".join(record.getMessage() for record in caplog.records)
@@ -466,9 +462,7 @@ class TestBulkUpdate:
             pytest.raises(GrpcBatchPartialError),
         ):
             adapter.bulk_update(BulkResource, items)
-        assert any(
-            "missing pk" in record.message for record in caplog.records
-        )
+        assert any("missing pk" in record.message for record in caplog.records)
         joined = "\n".join(record.getMessage() for record in caplog.records)
         assert "TOPSECRET" not in joined
         assert "secret-1" not in joined
@@ -541,9 +535,7 @@ class TestGetPkFieldName:
 
             fields = [IntegerFieldConfig(name="id")]
 
-        assert (
-            BaseGrpcServiceAdapter._get_pk_field_name(DefaultPkResource) == "id"
-        )
+        assert BaseGrpcServiceAdapter._get_pk_field_name(DefaultPkResource) == "id"
 
     def test_custom_pk_field(self):
         class CustomPkResource(BaseGrpcResource):
@@ -554,6 +546,4 @@ class TestGetPkFieldName:
 
             fields = [CharFieldConfig(name="rule_id")]
 
-        assert (
-            BaseGrpcServiceAdapter._get_pk_field_name(CustomPkResource) == "rule_id"
-        )
+        assert BaseGrpcServiceAdapter._get_pk_field_name(CustomPkResource) == "rule_id"

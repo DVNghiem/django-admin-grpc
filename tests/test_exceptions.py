@@ -1,6 +1,7 @@
 """
 Tests for django_admin_grpc.exceptions module.
 """
+
 from unittest.mock import Mock
 
 import grpc
@@ -153,6 +154,7 @@ class TestMapGrpcError:
         class NoDetailsError(grpc.RpcError):
             def code(self):
                 return grpc.StatusCode.INTERNAL
+
             # No details() method
 
         exc = NoDetailsError()
@@ -269,9 +271,7 @@ class TestGrpcBatchPartialError:
         assert exc.operation is None
 
     def test_accepts_list_for_failed(self):
-        exc = GrpcBatchPartialError(
-            "x", succeeded=[1], failed=["a", "b"], operation="bulk_create"
-        )
+        exc = GrpcBatchPartialError("x", succeeded=[1], failed=["a", "b"], operation="bulk_create")
         assert exc.failed == ["a", "b"]
 
     def test_inherits_from_grpc_admin_error(self):

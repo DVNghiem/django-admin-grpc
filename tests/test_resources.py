@@ -1,6 +1,7 @@
 """
 Tests for django_admin_grpc.resources module.
 """
+
 from django import forms
 
 from django_admin_grpc.resources import (
@@ -348,7 +349,5 @@ class TestBaseGrpcResource:
         assert "active" in form_class.base_fields
 
     def test_build_form_class_with_widgets(self):
-        form_class = ProductResource.build_form_class(
-            widgets={"name": forms.Textarea()}
-        )
+        form_class = ProductResource.build_form_class(widgets={"name": forms.Textarea()})
         assert isinstance(form_class.base_fields["name"].widget, forms.Textarea)

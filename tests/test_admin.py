@@ -2482,26 +2482,20 @@ class FailingBulkDeleteAdapter(BaseGrpcServiceAdapter):
 
 
 class TestBulkActionMixinRegisteredActions:
-    def test_bulk_delete_action_registered_when_can_delete(
-        self, admin_instance, reset_registry
-    ):
+    def test_bulk_delete_action_registered_when_can_delete(self, admin_instance, reset_registry):
         reset_registry.register("products", MockAdapter())
         request = RequestFactory().get("/")
         actions = admin_instance.get_actions(request)
         assert "bulk_delete_action" in actions
         assert "delete_selected" not in actions
 
-    def test_bulk_create_action_not_registered_by_default(
-        self, admin_instance, reset_registry
-    ):
+    def test_bulk_create_action_not_registered_by_default(self, admin_instance, reset_registry):
         reset_registry.register("products", MockAdapter())
         request = RequestFactory().get("/")
         actions = admin_instance.get_actions(request)
         assert "bulk_create_action" not in actions
 
-    def test_bulk_update_action_not_registered_by_default(
-        self, admin_instance, reset_registry
-    ):
+    def test_bulk_update_action_not_registered_by_default(self, admin_instance, reset_registry):
         reset_registry.register("products", MockAdapter())
         request = RequestFactory().get("/")
         actions = admin_instance.get_actions(request)
@@ -2535,9 +2529,7 @@ class TestBulkActionMixinRegisteredActions:
         actions = admin.get_actions(request)
         assert "bulk_update_action" in actions
 
-    def test_legacy_grpc_delete_selected_still_present(
-        self, admin_instance, reset_registry
-    ):
+    def test_legacy_grpc_delete_selected_still_present(self, admin_instance, reset_registry):
         reset_registry.register("products", MockAdapter())
         request = RequestFactory().get("/")
         actions = admin_instance.get_actions(request)
@@ -2562,9 +2554,7 @@ class TestBulkDeleteAction:
         mock_success.assert_called_once()
         assert sorted(adapter.deleted) == ["1", "2", "3"]
 
-    def test_bulk_delete_action_partial_failure_posts_error(
-        self, admin_instance, reset_registry
-    ):
+    def test_bulk_delete_action_partial_failure_posts_error(self, admin_instance, reset_registry):
         adapter = FailingBulkDeleteAdapter()
         reset_registry.register("products", adapter)
         admin_instance.adapter_class = adapter
@@ -2925,9 +2915,7 @@ class TestBulkUpdateAction:
 
 
 class TestApplyGrpcBulkDelete:
-    def test_returns_summary_dict_on_success(
-        self, admin_instance, reset_registry
-    ):
+    def test_returns_summary_dict_on_success(self, admin_instance, reset_registry):
         adapter = BulkDeleteAdapter()
         reset_registry.register("products", adapter)
         admin_instance.adapter_class = adapter
@@ -2940,9 +2928,7 @@ class TestApplyGrpcBulkDelete:
             result = admin_instance.apply_grpc_bulk_delete(request, qs)
         assert result == {"deleted": 2, "failed": []}
 
-    def test_returns_none_on_partial_failure(
-        self, admin_instance, reset_registry
-    ):
+    def test_returns_none_on_partial_failure(self, admin_instance, reset_registry):
         adapter = FailingBulkDeleteAdapter()
         reset_registry.register("products", adapter)
         admin_instance.adapter_class = adapter
@@ -2974,9 +2960,7 @@ class TestApplyGrpcBulkDelete:
         assert result is None
         mock_error.assert_called_once()
 
-    def test_empty_selection_returns_empty_summary(
-        self, admin_instance, reset_registry
-    ):
+    def test_empty_selection_returns_empty_summary(self, admin_instance, reset_registry):
         adapter = BulkDeleteAdapter()
         reset_registry.register("products", adapter)
         admin_instance.adapter_class = adapter

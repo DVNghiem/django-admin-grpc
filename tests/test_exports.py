@@ -5,6 +5,7 @@ Verifies that the symbols listed in the package ``__all__`` are actually
 importable from the package root.  This guards against accidental
 removals during refactors.
 """
+
 import django_admin_grpc
 
 
@@ -45,6 +46,5 @@ class TestTopLevelExports:
         """Every name in ``__all__`` must resolve on the package."""
         for name in django_admin_grpc.__all__:
             assert hasattr(django_admin_grpc, name), (
-                f"django_admin_grpc.__all__ lists {name!r} "
-                "but the package does not expose it"
+                f"django_admin_grpc.__all__ lists {name!r} but the package does not expose it"
             )

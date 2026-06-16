@@ -4,6 +4,7 @@ gRPC client interceptor that injects trace context into outgoing calls.
 The trace context is provided by a configurable callable so the package
 remains agnostic of any specific logging framework.
 """
+
 from __future__ import annotations
 
 import logging
@@ -61,12 +62,8 @@ class TraceClientInterceptor(
         new_details.method = client_call_details.method
         new_details.timeout = getattr(client_call_details, "timeout", None)
         new_details.credentials = getattr(client_call_details, "credentials", None)
-        new_details.wait_for_ready = getattr(
-            client_call_details, "wait_for_ready", None
-        )
-        new_details.compression = getattr(
-            client_call_details, "compression", None
-        )
+        new_details.wait_for_ready = getattr(client_call_details, "wait_for_ready", None)
+        new_details.compression = getattr(client_call_details, "compression", None)
         new_details.metadata = list(client_call_details.metadata or []) + trace_meta
         return new_details
 

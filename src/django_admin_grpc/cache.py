@@ -23,6 +23,7 @@ Configuration (read once on first use, no Django settings restart required)::
         "CACHE_BACKEND": "default",   # Django CACHES alias
     }
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -289,9 +290,7 @@ class CachedAdapterMixin:
         if cache is None:
             return
         prefix = cache.prefix
-        resource_name = (
-            f"{resource_class.__module__}.{resource_class.__qualname__}"
-        )
+        resource_name = f"{resource_class.__module__}.{resource_class.__qualname__}"
         # We don't know the exact list of cached keys, so we delete by a
         # versioned namespace: bumping the resource version makes every prior
         # list/get key unreachable. The version is stored under
@@ -319,9 +318,7 @@ class CachedAdapterMixin:
         """Build a cache key that includes the current resource version."""
         base = cache.make_key(resource, operation, kwargs)
         if isinstance(resource, type):
-            resource_name = (
-                f"{resource.__module__}.{resource.__qualname__}"
-            )
+            resource_name = f"{resource.__module__}.{resource.__qualname__}"
         else:
             resource_name = str(resource)
         version_key = f"{cache.prefix}:{resource_name}:_v"
@@ -446,9 +443,7 @@ class CachedAdapterMixin:
         self._invalidate_resource(resource_class)
         return cast(
             list[BaseGrpcResource],
-            cast(Any, super()).bulk_create(
-                resource_class, items, batch_size=batch_size
-            ),
+            cast(Any, super()).bulk_create(resource_class, items, batch_size=batch_size),
         )
 
     def bulk_update(  # type: ignore[override]
@@ -461,9 +456,7 @@ class CachedAdapterMixin:
         self._invalidate_resource(resource_class)
         return cast(
             list[BaseGrpcResource],
-            cast(Any, super()).bulk_update(
-                resource_class, items, batch_size=batch_size
-            ),
+            cast(Any, super()).bulk_update(resource_class, items, batch_size=batch_size),
         )
 
     def bulk_delete(  # type: ignore[override]
@@ -476,9 +469,7 @@ class CachedAdapterMixin:
         self._invalidate_resource(resource_class)
         return cast(
             dict[str, Any],
-            cast(Any, super()).bulk_delete(
-                resource_class, pks, batch_size=batch_size
-            ),
+            cast(Any, super()).bulk_delete(resource_class, pks, batch_size=batch_size),
         )
 
 

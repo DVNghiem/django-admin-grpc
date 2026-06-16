@@ -4,6 +4,7 @@ Base gRPC service adapter interface.
 Concrete adapters subclass ``BaseGrpcServiceAdapter`` and implement ``list()``,
 ``get()`` and optionally ``create()``, ``update()``, ``delete()``.
 """
+
 from __future__ import annotations
 
 import logging
@@ -131,9 +132,7 @@ class BaseGrpcServiceAdapter(ABC):
         data: dict[str, Any],
     ) -> BaseGrpcResource:
         """Create a new entity via gRPC."""
-        raise NotImplementedError(
-            f"{self.__class__.__name__} does not support create"
-        )
+        raise NotImplementedError(f"{self.__class__.__name__} does not support create")
 
     def update(
         self,
@@ -142,9 +141,7 @@ class BaseGrpcServiceAdapter(ABC):
         data: dict[str, Any],
     ) -> BaseGrpcResource:
         """Update an existing entity via gRPC."""
-        raise NotImplementedError(
-            f"{self.__class__.__name__} does not support update"
-        )
+        raise NotImplementedError(f"{self.__class__.__name__} does not support update")
 
     def delete(
         self,
@@ -152,9 +149,7 @@ class BaseGrpcServiceAdapter(ABC):
         pk: str,
     ) -> bool:
         """Delete an entity via gRPC."""
-        raise NotImplementedError(
-            f"{self.__class__.__name__} does not support delete"
-        )
+        raise NotImplementedError(f"{self.__class__.__name__} does not support delete")
 
     # ── Bulk operations (chunked fallback) ────────────────────────────────
 
@@ -263,9 +258,7 @@ class BaseGrpcServiceAdapter(ABC):
             for data in chunk:
                 pk = data.get(pk_field)
                 if pk is None:
-                    exc = ValueError(
-                        f"bulk_update item missing primary key field '{pk_field}'"
-                    )
+                    exc = ValueError(f"bulk_update item missing primary key field '{pk_field}'")
                     failed[pk] = exc
                     logger.warning(
                         "gRPC bulk_update item missing pk for resource=%s pk_field=%s",

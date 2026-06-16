@@ -4,6 +4,7 @@ Registry for gRPC service adapters.
 Provides a central place to register and look up ``BaseGrpcServiceAdapter``
 instances by a short service name.
 """
+
 from __future__ import annotations
 
 import logging
@@ -94,9 +95,7 @@ class AdapterRegistry:
             try:
                 adapter.close()
             except Exception:
-                logger.exception(
-                    "Error closing adapter for service: %s", adapter.service_name
-                )
+                logger.exception("Error closing adapter for service: %s", adapter.service_name)
 
 
 # Module-level singleton – import this in your ``ready()`` handler.

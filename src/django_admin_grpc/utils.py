@@ -5,6 +5,7 @@ Currently exposes a single, dependency-free ``chunked`` helper used by the
 adapter bulk operations.  New utilities that are not part of the public gRPC
 contract (resource, admin, adapter, exception) belong here.
 """
+
 from __future__ import annotations
 
 from collections.abc import Generator, Iterable

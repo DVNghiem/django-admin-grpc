@@ -5,6 +5,7 @@ These filters do not touch the ORM – they only read query-string parameters
 so that ``GrpcResourceAdmin.get_grpc_filters()`` can forward them to the
 remote service.
 """
+
 from __future__ import annotations
 
 import logging
@@ -29,12 +30,16 @@ class GrpcFieldListFilter(FieldListFilter):
     ):
         self.field = field
         self.field_path = field_path
-        self.title = getattr(
-            field, "verbose_name", field_path.replace("_", " ").title()
-        ) or field_path.replace("_", " ").title()
+        self.title = (
+            getattr(field, "verbose_name", field_path.replace("_", " ").title())
+            or field_path.replace("_", " ").title()
+        )
         # Bypass FieldListFilter.__init__ to avoid DB lookups
         super(FieldListFilter, self).__init__(
-            request, params, model, model_admin  # type: ignore[arg-type]
+            request,
+            params,
+            model,
+            model_admin,  # type: ignore[arg-type]
         )
 
     def expected_parameters(self) -> list[str | None]:
@@ -66,17 +71,13 @@ class GrpcBooleanFieldListFilter(GrpcFieldListFilter):
     def choices(self, changelist: Any) -> Any:
         yield {
             "selected": self.lookup_val is None,
-            "query_string": changelist.get_query_string(
-                remove=[self.lookup_kwarg]
-            ),
+            "query_string": changelist.get_query_string(remove=[self.lookup_kwarg]),
             "display": "All",
         }
         for lookup, title in (("1", "Yes"), ("0", "No")):
             yield {
                 "selected": self.lookup_val == lookup,
-                "query_string": changelist.get_query_string(
-                    {self.lookup_kwarg: lookup}
-                ),
+                "query_string": changelist.get_query_string({self.lookup_kwarg: lookup}),
                 "display": title,
             }
 
@@ -105,17 +106,13 @@ class GrpcChoicesFieldListFilter(GrpcFieldListFilter):
     def choices(self, changelist: Any) -> Any:
         yield {
             "selected": self.lookup_val is None,
-            "query_string": changelist.get_query_string(
-                remove=[self.lookup_kwarg]
-            ),
+            "query_string": changelist.get_query_string(remove=[self.lookup_kwarg]),
             "display": "All",
         }
         for lookup, title in self._choices:
             yield {
                 "selected": self.lookup_val == lookup,
-                "query_string": changelist.get_query_string(
-                    {self.lookup_kwarg: lookup}
-                ),
+                "query_string": changelist.get_query_string({self.lookup_kwarg: lookup}),
                 "display": title,
             }
 
@@ -161,13 +158,14 @@ class GrpcTextInputFilter(FieldListFilter):
     ):
         self.field = field
         self.field_path = field_path
-        self._label = getattr(
-            field, "verbose_name", field_path.replace("_", " ").title()
-        )
+        self._label = getattr(field, "verbose_name", field_path.replace("_", " ").title())
         self.lookup_kwarg = field_path
         self.lookup_val = params.get(self.lookup_kwarg, "")
         super(FieldListFilter, self).__init__(
-            request, params, model, model_admin  # type: ignore[arg-type]
+            request,
+            params,
+            model,
+            model_admin,  # type: ignore[arg-type]
         )
         if self.lookup_val:
             self.used_parameters[self.lookup_kwarg] = self.lookup_val
@@ -210,15 +208,16 @@ class GrpcNumberRangeFilter(FieldListFilter):
     ):
         self.field = field
         self.field_path = field_path
-        self._label = getattr(
-            field, "verbose_name", field_path.replace("_", " ").title()
-        )
+        self._label = getattr(field, "verbose_name", field_path.replace("_", " ").title())
         self.lookup_kwarg_gte = f"{field_path}__gte"
         self.lookup_kwarg_lte = f"{field_path}__lte"
         self.lookup_val_gte = params.get(self.lookup_kwarg_gte, "")
         self.lookup_val_lte = params.get(self.lookup_kwarg_lte, "")
         super(FieldListFilter, self).__init__(
-            request, params, model, model_admin  # type: ignore[arg-type]
+            request,
+            params,
+            model,
+            model_admin,  # type: ignore[arg-type]
         )
         if self.lookup_val_gte:
             self.used_parameters[self.lookup_kwarg_gte] = self.lookup_val_gte
@@ -268,15 +267,16 @@ class GrpcDateRangeFilter(FieldListFilter):
     ):
         self.field = field
         self.field_path = field_path
-        self._label = getattr(
-            field, "verbose_name", field_path.replace("_", " ").title()
-        )
+        self._label = getattr(field, "verbose_name", field_path.replace("_", " ").title())
         self.lookup_kwarg_gte = f"{field_path}__gte"
         self.lookup_kwarg_lte = f"{field_path}__lte"
         self.lookup_val_gte = params.get(self.lookup_kwarg_gte, "")
         self.lookup_val_lte = params.get(self.lookup_kwarg_lte, "")
         super(FieldListFilter, self).__init__(
-            request, params, model, model_admin  # type: ignore[arg-type]
+            request,
+            params,
+            model,
+            model_admin,  # type: ignore[arg-type]
         )
         if self.lookup_val_gte:
             self.used_parameters[self.lookup_kwarg_gte] = self.lookup_val_gte
@@ -325,18 +325,20 @@ class GrpcMultiChoicesFilter(FieldListFilter):
     ):
         self.field = field
         self.field_path = field_path
-        self.title = getattr(
-            field, "verbose_name", field_path.replace("_", " ").title()
-        ) or field_path.replace("_", " ").title()
+        self.title = (
+            getattr(field, "verbose_name", field_path.replace("_", " ").title())
+            or field_path.replace("_", " ").title()
+        )
         self.lookup_kwarg = field_path
         self.lookup_kwarg_in = f"{field_path}__in"
         raw_val = params.get(self.lookup_kwarg, "")
-        self.lookup_vals = [
-            v.strip() for v in raw_val.split(",") if v.strip()
-        ] if raw_val else []
+        self.lookup_vals = [v.strip() for v in raw_val.split(",") if v.strip()] if raw_val else []
         self._choices = choices or []
         super(FieldListFilter, self).__init__(
-            request, params, model, model_admin  # type: ignore[arg-type]
+            request,
+            params,
+            model,
+            model_admin,  # type: ignore[arg-type]
         )
         if self.lookup_vals:
             self.used_parameters[self.lookup_kwarg] = ",".join(self.lookup_vals)
@@ -361,9 +363,7 @@ class GrpcMultiChoicesFilter(FieldListFilter):
                 new_vals.append(lookup)
 
             if new_vals:
-                query = changelist.get_query_string(
-                    {self.lookup_kwarg: ",".join(new_vals)}
-                )
+                query = changelist.get_query_string({self.lookup_kwarg: ",".join(new_vals)})
             else:
                 query = changelist.get_query_string(
                     remove=[self.lookup_kwarg, self.lookup_kwarg_in]
@@ -422,7 +422,10 @@ def create_grpc_filter_spec(
                 else "-"
             )
             super(FieldListFilter, self).__init__(
-                request, params, model, model_admin_instance  # type: ignore[arg-type]
+                request,
+                params,
+                model,
+                model_admin_instance,  # type: ignore[arg-type]
             )
 
         def expected_parameters(self) -> list[str | None]:
@@ -434,9 +437,7 @@ def create_grpc_filter_spec(
         def choices(self, changelist: Any) -> Any:
             yield {
                 "selected": self.lookup_val is None,
-                "query_string": changelist.get_query_string(
-                    remove=[self.lookup_kwarg]
-                ),
+                "query_string": changelist.get_query_string(remove=[self.lookup_kwarg]),
                 "display": "All",
             }
 
@@ -450,9 +451,7 @@ def create_grpc_filter_spec(
             for lookup, title in filter_choices:
                 yield {
                     "selected": self.lookup_val == lookup,
-                    "query_string": changelist.get_query_string(
-                        {self.lookup_kwarg: lookup}
-                    ),
+                    "query_string": changelist.get_query_string({self.lookup_kwarg: lookup}),
                     "display": title,
                 }
 
@@ -474,8 +473,6 @@ def _make_multi_choices_filter_class(
             model_admin: Any,
             field_path: str,
         ):
-            super().__init__(
-                field, request, params, model, model_admin, field_path, choices
-            )
+            super().__init__(field, request, params, model, model_admin, field_path, choices)
 
     return BoundMultiChoicesFilter

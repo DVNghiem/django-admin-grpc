@@ -4,6 +4,7 @@ Base resource and field configuration for django-admin-grpc.
 A ``BaseGrpcResource`` subclass declares the shape of a remote entity so that
 Django admin can render lists, forms and detail views without touching the ORM.
 """
+
 from __future__ import annotations
 
 import logging

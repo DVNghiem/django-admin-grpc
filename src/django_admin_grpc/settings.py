@@ -1,6 +1,7 @@
 """
 Settings helpers for django-admin-grpc.
 """
+
 from typing import Any
 
 from django.conf import settings

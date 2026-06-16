@@ -3,6 +3,7 @@ Django settings for example_project.
 
 Minimal configuration to demonstrate django-admin-grpc.
 """
+
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent

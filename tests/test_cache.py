@@ -368,9 +368,7 @@ class TestCachedAdapterMixin:
         assert len(default_cache._cache.keys()) == 0  # type: ignore[attr-defined]
         default_cache.clear()
 
-    def test_class_level_none_opt_out_overrides_global_cache_enabled(
-        self, settings
-    ):
+    def test_class_level_none_opt_out_overrides_global_cache_enabled(self, settings):
         """Class-level ``grpc_cache = None`` must be honoured globally."""
         settings.GRPC_ADMIN_CACHE_ENABLED = True
         settings.GRPC_ADMIN_CACHE_PREFIX = "opt_out_class_regression"

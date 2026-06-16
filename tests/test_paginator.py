@@ -1,6 +1,7 @@
 """
 Tests for django_admin_grpc.paginator module.
 """
+
 from django_admin_grpc.paginator import GrpcPaginator, PagedResult, compute_filter_fingerprint
 
 
@@ -66,4 +67,3 @@ class TestComputeFilterFingerprint:
     def test_length(self):
         fp = compute_filter_fingerprint({"a": 1, "b": 2})
         assert len(fp) == 16
-

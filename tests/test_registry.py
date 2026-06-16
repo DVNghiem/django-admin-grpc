@@ -1,6 +1,7 @@
 """
 Tests for django_admin_grpc.registry module.
 """
+
 import threading
 from unittest.mock import Mock, patch
 
@@ -93,8 +94,9 @@ class TestAdapterRegistry:
             def __exit__(self, *args):
                 self.release()
 
-        with patch.object(registry, "_lock", FreezingRLock()), pytest.raises(
-            RuntimeError, match="frozen"
+        with (
+            patch.object(registry, "_lock", FreezingRLock()),
+            pytest.raises(RuntimeError, match="frozen"),
         ):
             registry.register("svc", Mock())
 
@@ -131,8 +133,9 @@ class TestAdapterRegistry:
             def __exit__(self, *args):
                 self.release()
 
-        with patch.object(registry, "_lock", FreezingRLock()), pytest.raises(
-            RuntimeError, match="frozen"
+        with (
+            patch.object(registry, "_lock", FreezingRLock()),
+            pytest.raises(RuntimeError, match="frozen"),
         ):
             registry.unregister("svc")
 
@@ -168,8 +171,9 @@ class TestAdapterRegistry:
             def __exit__(self, *args):
                 self.release()
 
-        with patch.object(registry, "_lock", FreezingRLock()), pytest.raises(
-            RuntimeError, match="frozen"
+        with (
+            patch.object(registry, "_lock", FreezingRLock()),
+            pytest.raises(RuntimeError, match="frozen"),
         ):
             registry.clear()
 

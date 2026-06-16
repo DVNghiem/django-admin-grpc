@@ -1,6 +1,7 @@
 """
 Tests for django_admin_grpc.settings module.
 """
+
 from unittest.mock import patch
 
 import pytest
@@ -28,10 +29,13 @@ class TestGetSetting:
             assert result.__name__ == "ModelAdmin"
 
     def test_imports_class_setting_failure_raises(self):
-        with patch(
-            "django_admin_grpc.settings.settings",
-            DEFAULT_ADMIN_CLASS="nonexistent.module.Class",
-        ), pytest.raises(ImportError):
+        with (
+            patch(
+                "django_admin_grpc.settings.settings",
+                DEFAULT_ADMIN_CLASS="nonexistent.module.Class",
+            ),
+            pytest.raises(ImportError),
+        ):
             get_setting("DEFAULT_ADMIN_CLASS")
 
     def test_returns_template_path_as_string(self):
