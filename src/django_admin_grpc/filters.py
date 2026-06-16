@@ -9,7 +9,7 @@ remote service.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 from django.contrib.admin import FieldListFilter, SimpleListFilter
 
@@ -37,9 +37,9 @@ class GrpcFieldListFilter(FieldListFilter):
         # Bypass FieldListFilter.__init__ to avoid DB lookups
         super(FieldListFilter, self).__init__(
             request,
-            params,
+            cast(dict[str, list[str]], params),
             model,
-            model_admin,  # type: ignore[arg-type]
+            model_admin,
         )
 
     def expected_parameters(self) -> list[str | None]:
@@ -163,9 +163,9 @@ class GrpcTextInputFilter(FieldListFilter):
         self.lookup_val = params.get(self.lookup_kwarg, "")
         super(FieldListFilter, self).__init__(
             request,
-            params,
+            cast(dict[str, list[str]], params),
             model,
-            model_admin,  # type: ignore[arg-type]
+            model_admin,
         )
         if self.lookup_val:
             self.used_parameters[self.lookup_kwarg] = self.lookup_val
@@ -215,9 +215,9 @@ class GrpcNumberRangeFilter(FieldListFilter):
         self.lookup_val_lte = params.get(self.lookup_kwarg_lte, "")
         super(FieldListFilter, self).__init__(
             request,
-            params,
+            cast(dict[str, list[str]], params),
             model,
-            model_admin,  # type: ignore[arg-type]
+            model_admin,
         )
         if self.lookup_val_gte:
             self.used_parameters[self.lookup_kwarg_gte] = self.lookup_val_gte
@@ -274,9 +274,9 @@ class GrpcDateRangeFilter(FieldListFilter):
         self.lookup_val_lte = params.get(self.lookup_kwarg_lte, "")
         super(FieldListFilter, self).__init__(
             request,
-            params,
+            cast(dict[str, list[str]], params),
             model,
-            model_admin,  # type: ignore[arg-type]
+            model_admin,
         )
         if self.lookup_val_gte:
             self.used_parameters[self.lookup_kwarg_gte] = self.lookup_val_gte
@@ -336,9 +336,9 @@ class GrpcMultiChoicesFilter(FieldListFilter):
         self._choices = choices or []
         super(FieldListFilter, self).__init__(
             request,
-            params,
+            cast(dict[str, list[str]], params),
             model,
-            model_admin,  # type: ignore[arg-type]
+            model_admin,
         )
         if self.lookup_vals:
             self.used_parameters[self.lookup_kwarg] = ",".join(self.lookup_vals)
@@ -423,9 +423,9 @@ def create_grpc_filter_spec(
             )
             super(FieldListFilter, self).__init__(
                 request,
-                params,
+                cast(dict[str, list[str]], params),
                 model,
-                model_admin_instance,  # type: ignore[arg-type]
+                model_admin_instance,
             )
 
         def expected_parameters(self) -> list[str | None]:

@@ -151,10 +151,10 @@ class BaseAsyncGrpcServiceAdapter(ABC):
     async def bulk_create(
         self,
         resource_class: type[BaseGrpcResource],
-        items: list[dict[str, Any]],
+        items: list[dict[str, Any]],  # type: ignore[valid-type]
         *,
         batch_size: int | None = None,
-    ) -> list[BaseGrpcResource]:
+    ) -> list[BaseGrpcResource]:  # type: ignore[valid-type]
         """
         Create multiple entities via gRPC, chunked.
 
@@ -178,7 +178,9 @@ class BaseAsyncGrpcServiceAdapter(ABC):
         # disambiguated, but the raw input payload is intentionally not
         # logged — it may contain sensitive fields.
         resource_name = getattr(resource_class, "__name__", str(resource_class))
+        chunk: Sequence[dict[str, Any]]
         for chunk in chunked(items, size):
+            data: dict[str, Any]
             for data in chunk:
                 # Stable key: the index of the input across all chunks.
                 index = len(succeeded_inputs) + len(failed)
@@ -205,10 +207,10 @@ class BaseAsyncGrpcServiceAdapter(ABC):
     async def bulk_update(
         self,
         resource_class: type[BaseGrpcResource],
-        items: list[dict[str, Any]],
+        items: list[dict[str, Any]],  # type: ignore[valid-type]
         *,
         batch_size: int | None = None,
-    ) -> list[BaseGrpcResource]:
+    ) -> list[BaseGrpcResource]:  # type: ignore[valid-type]
         """
         Update multiple entities via gRPC, chunked.
 
@@ -233,9 +235,11 @@ class BaseAsyncGrpcServiceAdapter(ABC):
         # disambiguated, but the raw input payload is intentionally not
         # logged — it may contain sensitive fields.
         resource_name = getattr(resource_class, "__name__", str(resource_class))
+        chunk: Sequence[dict[str, Any]]
         for chunk in chunked(items, size):
+            data: dict[str, Any]
             for data in chunk:
-                pk = data.get(pk_field)
+                pk: Any = data.get(pk_field)
                 if pk is None:
                     exc = ValueError(f"bulk_update item missing primary key field '{pk_field}'")
                     failed[pk] = exc
@@ -268,7 +272,7 @@ class BaseAsyncGrpcServiceAdapter(ABC):
     async def bulk_delete(
         self,
         resource_class: type[BaseGrpcResource],
-        pks: list[Any],
+        pks: list[Any],  # type: ignore[valid-type]
         *,
         batch_size: int | None = None,
     ) -> dict[str, Any]:
@@ -293,7 +297,9 @@ class BaseAsyncGrpcServiceAdapter(ABC):
         # disambiguated.  ``bulk_delete`` only logs the PK (not a payload),
         # but the resource name is kept consistent with bulk_create / update.
         resource_name = getattr(resource_class, "__name__", str(resource_class))
+        chunk: Sequence[Any]
         for chunk in chunked(pks, size):
+            pk: Any
             for pk in chunk:
                 try:
                     await self.delete(resource_class, str(pk))

@@ -277,7 +277,7 @@ class CachedAdapterMixin:
             self.grpc_cache = cache
             return cache
         # Either an explicit ``None`` (opt-out) or a GrpcAdminCache instance.
-        return cache
+        return cast(GrpcAdminCache | None, cache)
 
     # ── Invalidation helpers ──────────────────────────────────────────────
 
@@ -436,33 +436,33 @@ class CachedAdapterMixin:
     def bulk_create(  # type: ignore[override]
         self,
         resource_class: type[BaseGrpcResource],
-        items: list[dict[str, Any]],
+        items: list[dict[str, Any]],  # type: ignore[valid-type]
         *,
         batch_size: int | None = None,
-    ) -> list[BaseGrpcResource]:
+    ) -> list[BaseGrpcResource]:  # type: ignore[valid-type]
         self._invalidate_resource(resource_class)
         return cast(
-            list[BaseGrpcResource],
+            list[BaseGrpcResource],  # type: ignore[valid-type]
             cast(Any, super()).bulk_create(resource_class, items, batch_size=batch_size),
         )
 
     def bulk_update(  # type: ignore[override]
         self,
         resource_class: type[BaseGrpcResource],
-        items: list[dict[str, Any]],
+        items: list[dict[str, Any]],  # type: ignore[valid-type]
         *,
         batch_size: int | None = None,
-    ) -> list[BaseGrpcResource]:
+    ) -> list[BaseGrpcResource]:  # type: ignore[valid-type]
         self._invalidate_resource(resource_class)
         return cast(
-            list[BaseGrpcResource],
+            list[BaseGrpcResource],  # type: ignore[valid-type]
             cast(Any, super()).bulk_update(resource_class, items, batch_size=batch_size),
         )
 
     def bulk_delete(  # type: ignore[override]
         self,
         resource_class: type[BaseGrpcResource],
-        pks: list[Any],
+        pks: list[Any],  # type: ignore[valid-type]
         *,
         batch_size: int | None = None,
     ) -> dict[str, Any]:
