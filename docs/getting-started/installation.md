@@ -63,7 +63,7 @@ python manage.py shell
 ```python
 >>> import django_admin_grpc
 >>> django_admin_grpc.__version__
-'0.2.2'
+'0.3.0'
 ```
 
 If the import succeeds, the package is installed correctly.

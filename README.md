@@ -18,6 +18,12 @@ Django Admin backed by gRPC services — no ORM required.
 pip install django-admin-grpc
 ```
 
+Excel export requires `openpyxl`:
+
+```bash
+pip install openpyxl
+```
+
 Add the app to `INSTALLED_APPS`:
 
 ```python
@@ -68,6 +74,10 @@ That is all. Django Admin now shows list, add, change, and delete screens powere
 | `BaseGrpcMapper` | Optional request/response mapper between Django forms and protobuf messages. |
 | `PagedResult` | Dataclass returned by `adapter.list()` carrying items, total count, and optional cursor. |
 | `AdapterRegistry` | Central registry mapping service names to adapter instances. |
+| `ProtoFieldInspector` | Generate field configs from a protobuf message descriptor. |
+| `AuditMixin` / `BaseAuditBackend` | Capture and persist audit events for admin write operations. |
+| `ExportMixin` | Add CSV and Excel export actions to the changelist. |
+| `TenantContextProvider` / `AuthTokenProvider` / `CorrelationIdProvider` | Propagate request context into outgoing gRPC metadata. |
 
 ---
 
@@ -167,30 +177,30 @@ class NetworkRulesAdapter(BaseGrpcServiceAdapter):
     def list(self, resource_class, page=1, page_size=25, filters=None):
         stub = NetworkRulesStub(self.channel)
         request = ListRulesRequest(page=page, page_size=page_size)
-        response = stub.ListRules(request)
+        response = stub.ListRules(request, metadata=self.get_grpc_metadata())
         items = [resource_class.from_response(r) for r in response.rules]
         return PagedResult(items=items, total=response.total)
 
     def get(self, resource_class, pk):
         stub = NetworkRulesStub(self.channel)
-        response = stub.GetRule(GetRuleRequest(rule_id=pk))
+        response = stub.GetRule(GetRuleRequest(rule_id=pk), metadata=self.get_grpc_metadata())
         return resource_class.from_response(response)
 
     def create(self, resource_class, data):
         stub = NetworkRulesStub(self.channel)
         request = CreateRuleRequest(**data)
-        response = stub.CreateRule(request)
+        response = stub.CreateRule(request, metadata=self.get_grpc_metadata())
         return resource_class.from_response(response)
 
     def update(self, resource_class, pk, data):
         stub = NetworkRulesStub(self.channel)
         request = UpdateRuleRequest(rule_id=pk, **data)
-        response = stub.UpdateRule(request)
+        response = stub.UpdateRule(request, metadata=self.get_grpc_metadata())
         return resource_class.from_response(response)
 
     def delete(self, resource_class, pk):
         stub = NetworkRulesStub(self.channel)
-        stub.DeleteRule(DeleteRuleRequest(rule_id=pk))
+        stub.DeleteRule(DeleteRuleRequest(rule_id=pk), metadata=self.get_grpc_metadata())
         return True
 ```
 
@@ -204,6 +214,15 @@ adapter_registry.register("network_rules", adapter)
 ```
 
 When registered by name, the admin class can reference it with `service_name = "network_rules"` instead of `adapter_class`.
+
+Because adapters own the concrete gRPC stub calls, the framework cannot inject metadata automatically. Pass the result of `self.get_grpc_metadata(request)` (or `self.get_grpc_metadata()` when no request is available) to every stub invocation so context providers are honoured:
+
+```python
+response = stub.GetRule(
+    GetRuleRequest(rule_id=pk),
+    metadata=self.get_grpc_metadata(request),
+)
+```
 
 ---
 
@@ -585,6 +604,249 @@ The mixin is fully transparent: if caching is disabled globally, if the mixin is
 
 ---
 
+## Proto Introspection
+
+If you already maintain protobuf message definitions, `BaseGrpcResource.from_proto()` can generate a resource class from a `Descriptor` so you do not have to hand-write every field config.
+
+**Before (manual):**
+
+```python
+from django_admin_grpc.resources import (
+    BaseGrpcResource,
+    BooleanFieldConfig,
+    CharFieldConfig,
+    ChoicesFieldConfig,
+    FloatFieldConfig,
+    IntegerFieldConfig,
+)
+
+class Product(BaseGrpcResource):
+    class Meta:
+        app_label = "catalog"
+        model_name = "product"
+
+    fields = [
+        IntegerFieldConfig(name="id"),
+        CharFieldConfig(name="name"),
+        BooleanFieldConfig(name="active"),
+        FloatFieldConfig(name="price"),
+        ChoicesFieldConfig(name="status", choices=[(0, "DRAFT"), (1, "PUBLISHED")]),
+    ]
+```
+
+**After (auto-generated from proto):**
+
+```python
+from django_admin_grpc import BaseGrpcResource
+from myapp import product_pb2
+
+ProductResource = BaseGrpcResource.from_proto(
+    product_pb2.Product.DESCRIPTOR,
+    app_label="catalog",
+    model_name="product",
+    verbose_name="Product",
+)
+```
+
+Or configure lazily on first admin use:
+
+```python
+class ProductResource(BaseGrpcResource):
+    class Meta:
+        app_label = "catalog"
+        model_name = "product"
+
+    proto_descriptor = product_pb2.Product.DESCRIPTOR
+
+class ProductAdmin(GrpcResourceAdmin):
+    resource_class = ProductResource
+    auto_configure_from_proto = True
+    auto_configure_from_proto_options = {"pk_field": "id"}
+```
+
+By default scalar protobuf fields become the matching `BaseFieldConfig` subclass, enums become `ChoicesFieldConfig`, and nested/repeated messages become `JSONFieldConfig`. Use the optional arguments to customize the result:
+
+```python
+ProductResource = BaseGrpcResource.from_proto(
+    product_pb2.Product.DESCRIPTOR,
+    app_label="catalog",
+    pk_field="sku",
+    exclude=["internal_notes"],
+    readonly=["created_at"],
+    field_overrides={"category": ChoicesFieldConfig(name="category", choices=[...])},
+)
+```
+
+`ProtoFieldInspector` is available directly for finer control over field generation:
+
+```python
+from django_admin_grpc import ProtoFieldInspector
+
+inspector = ProtoFieldInspector(
+    product_pb2.Product.DESCRIPTOR,
+    exclude=["internal_notes"],
+    readonly=["created_at"],
+    pk_field="id",
+)
+fields = inspector.get_field_configs()
+list_display = inspector.get_list_display()      # scalar fields only
+search_fields = inspector.get_search_fields()    # string fields only
+```
+
+---
+
+## Audit Logging
+
+Every create, update, and delete performed through `GrpcResourceAdmin` can emit an audit event. Enable it with the `GRPC_ADMIN_AUDIT_BACKEND` setting.
+
+```python
+GRPC_ADMIN = {
+    "AUDIT_BACKEND": "django_admin_grpc.audit.DjangoModelAuditBackend",
+}
+```
+
+Backends included:
+
+| Backend | Purpose |
+|---------|---------|
+| `LoggingAuditBackend` | Writes JSON events to the `django_admin_grpc.audit` logger. This is the default. |
+| `DjangoModelAuditBackend` | Persists events to the `GrpcAuditLog` model. Run `python manage.py migrate` after enabling. |
+| `CompositeAuditBackend` | Fans events out to multiple backends. |
+
+Implement a custom backend by subclassing `BaseAuditBackend`:
+
+```python
+from django_admin_grpc import BaseAuditBackend, AuditEvent
+
+class WebhookAuditBackend(BaseAuditBackend):
+    def log(self, event: AuditEvent) -> None:
+        requests.post("https://audit.example.com/events", json=event.__dict__)
+
+    def query(self, **filters):
+        return []
+```
+
+Disable auditing per admin with `audit_enabled = False`, or per request by setting `audit_backend` to `None`.
+
+**Querying audit events.** All backends support a `query(**filters)` method:
+
+```python
+from django_admin_grpc import load_audit_backend
+
+backend = load_audit_backend()
+events = backend.query(
+    resource_name="Product",
+    operation="update",
+    user="alice",
+    since=datetime(2024, 1, 1),
+    until=datetime(2024, 12, 31),
+    success=True,
+    limit=100,
+)
+```
+
+Supported filters (backend-specific):
+
+| Filter | Description |
+|--------|-------------|
+| `resource_name` | Resource class name |
+| `operation` | `create`, `update`, `delete`, `bulk_create`, `bulk_update`, `bulk_delete` |
+| `user` | Username who performed the action |
+| `request_id` | Correlation ID from the request |
+| `success` | `True` or `False` |
+| `pk` | Primary key of the affected record |
+| `since` / `until` | Timestamp range (datetime objects) |
+| `limit` | Maximum number of events to return |
+
+---
+
+## CSV and Excel Export
+
+`GrpcResourceAdmin` ships with `export_as_csv` and `export_as_excel` actions. They respect active list filters and search terms, stream every page from the gRPC service, and cap the total at `export_max_rows`.
+
+```python
+@admin.register(Product.admin_model())
+class ProductAdmin(GrpcResourceAdmin):
+    resource_class = Product
+    adapter_class = CatalogAdapter
+    export_fields = ["id", "name", "price"]
+    export_max_rows = 5000
+```
+
+| Attribute | Default | Description |
+|-----------|---------|-------------|
+| `export_fields` | `None` (uses `list_display`) | Fields to include in the export. |
+| `export_max_rows` | `10000` | Hard cap on exported rows. |
+| `export_filename_prefix` | `""` | Prepended to generated filenames. |
+
+Override `has_export_permission()` to restrict access beyond the default view permission. For example, restrict export to superusers only:
+
+```python
+@admin.register(Product.admin_model())
+class ProductAdmin(GrpcResourceAdmin):
+    resource_class = Product
+    adapter_class = CatalogAdapter
+
+    def has_export_permission(self, request):
+        return request.user.is_superuser and self.has_view_permission(request)
+```
+
+---
+
+## gRPC Context Propagation
+
+Adapters can inject gRPC metadata from the current Django request. Global providers are configured via `GRPC_ADMIN_CONTEXT_PROVIDERS`; adapter-level providers via `grpc_context_providers`. Adapters must call `self.get_grpc_metadata(request)` and pass the result as `metadata=` on each stub call — the framework cannot inject metadata automatically because the concrete stub invocation lives in adapter code.
+
+```python
+GRPC_ADMIN = {
+    "CONTEXT_PROVIDERS": [
+        "django_admin_grpc.CorrelationIdProvider",
+        "django_admin_grpc.AuthTokenProvider",
+        "myapp.tenant_provider",
+    ],
+}
+```
+
+Built-in providers:
+
+| Provider | Injected metadata |
+|----------|-------------------|
+| `TenantContextProvider` | `x-tenant-id` from `request.tenant.id` or the header configured by `GRPC_ADMIN_TENANT_HEADER`. |
+| `AuthTokenProvider` | `authorization` from `request.META["HTTP_AUTHORIZATION"]`. |
+| `CorrelationIdProvider` | `x-request-id`; reuses an existing header or generates a UUID. |
+
+Custom providers are callables that receive the `HttpRequest` (or `None`) and return a `dict[str, str]`:
+
+```python
+def locale_provider(request):
+    if request is None:
+        return {}
+    return {"x-accept-language": request.META.get("HTTP_ACCEPT_LANGUAGE", "en")}
+```
+
+Register globally:
+
+```python
+GRPC_ADMIN = {
+    "CONTEXT_PROVIDERS": [
+        "django_admin_grpc.CorrelationIdProvider",
+        "myapp.locale_provider",
+    ],
+}
+```
+
+Or attach to a single adapter:
+
+```python
+class CatalogAdapter(BaseGrpcServiceAdapter):
+    service_name = "catalog"
+    grpc_context_providers = [locale_provider]
+```
+
+Results from global and adapter-level providers are merged; adapter-level values override global ones with the same key.
+
+---
+
 ## Customizing Appearance
 
 ### Custom Widgets
@@ -676,6 +938,9 @@ Set these in your Django `settings.py`:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `GRPC_ADMIN_TRACE_CONTEXT_PROVIDER` | `None` | Callable or dotted path that returns a dict of trace headers injected into every gRPC call. |
+| `GRPC_ADMIN_CONTEXT_PROVIDERS` | `[]` | List of callables or dotted paths returning metadata to inject into gRPC calls. |
+| `GRPC_ADMIN_TENANT_HEADER` | `"x-tenant-id"` | Header name used by `TenantContextProvider`. |
+| `GRPC_ADMIN_AUDIT_BACKEND` | `None` | Audit backend dotted path or instance. Defaults to `LoggingAuditBackend`. |
 | `GRPC_ADMIN_DEFAULT_PAGE_SIZE` | `25` | Default items per page for list views. |
 | `GRPC_ADMIN_MAX_PAGE_SIZE` | `100` | Maximum items per page. |
 | `GRPC_ADMIN_CURSOR_PAGINATION` | `False` | Enable cursor-based pagination globally. |

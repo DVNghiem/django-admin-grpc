@@ -4,71 +4,21 @@ django-admin-grpc
 A reusable Django package for creating admin interfaces backed by gRPC services.
 """
 
-from django_admin_grpc.adapters import BaseGrpcServiceAdapter
-from django_admin_grpc.admin import (
-    AsyncGrpcResourceAdmin,
-    BulkActionMixin,
-    GrpcResourceAdmin,
-    bulk_grpc_action,
-    grpc_action,
-    run_async,
-)
-from django_admin_grpc.async_adapter import (
-    AsyncAdapterRegistry,
-    BaseAsyncGrpcServiceAdapter,
-    async_adapter_registry,
-)
-from django_admin_grpc.cache import CachedAdapterMixin, GrpcAdminCache
-from django_admin_grpc.exceptions import (
-    GrpcAbortedError,
-    GrpcAdminError,
-    GrpcAlreadyExistsError,
-    GrpcBatchPartialError,
-    GrpcCancelledError,
-    GrpcDeadlineExceededError,
-    GrpcFailedPreconditionError,
-    GrpcInvalidArgumentError,
-    GrpcNotFoundError,
-    GrpcPermissionDeniedError,
-    GrpcResourceExhaustedError,
-    GrpcUnavailableError,
-)
-from django_admin_grpc.filters import (
-    GrpcBooleanFieldListFilter,
-    GrpcChoicesFieldListFilter,
-    GrpcSimpleListFilter,
-    GrpcTextInputFilter,
-    create_grpc_filter_spec,
-)
-from django_admin_grpc.guide import GUIDE
-from django_admin_grpc.mappers import BaseGrpcMapper
-from django_admin_grpc.paginator import GrpcPaginator, PagedResult
-from django_admin_grpc.pool import GrpcChannelPool
-from django_admin_grpc.registry import AdapterRegistry, adapter_registry
-from django_admin_grpc.resources import (
-    BaseFieldConfig,
-    BaseGrpcResource,
-    BooleanFieldConfig,
-    CharFieldConfig,
-    ChoicesFieldConfig,
-    DateFieldConfig,
-    DateTimeFieldConfig,
-    FKFieldConfig,
-    FloatFieldConfig,
-    IntegerFieldConfig,
-    TextFieldConfig,
-)
-from django_admin_grpc.utils import chunked
+from __future__ import annotations
 
-__version__ = "0.2.2"
+__version__ = "0.3.0"
 
 __all__ = [
     "GUIDE",
     "GrpcResourceAdmin",
     "AsyncGrpcResourceAdmin",
+    "AuditMixin",
+    "ExportMixin",
     "BulkActionMixin",
     "grpc_action",
     "bulk_grpc_action",
+    "export_as_csv",
+    "export_as_excel",
     "run_async",
     "BaseFieldConfig",
     "BaseGrpcResource",
@@ -83,7 +33,18 @@ __all__ = [
     "FKFieldConfig",
     "FloatFieldConfig",
     "IntegerFieldConfig",
+    "JSONFieldConfig",
     "TextFieldConfig",
+    "ProtoFieldInspector",
+    "AuditEvent",
+    "BaseAuditBackend",
+    "LoggingAuditBackend",
+    "DjangoModelAuditBackend",
+    "CompositeAuditBackend",
+    "GrpcAuditLog",
+    "TenantContextProvider",
+    "AuthTokenProvider",
+    "CorrelationIdProvider",
     "GrpcAdminError",
     "GrpcAlreadyExistsError",
     "GrpcBatchPartialError",
@@ -112,3 +73,76 @@ __all__ = [
     "CachedAdapterMixin",
     "chunked",
 ]
+
+_import_map: dict[str, str] = {
+    "GUIDE": "django_admin_grpc.guide",
+    "GrpcResourceAdmin": "django_admin_grpc.admin",
+    "AsyncGrpcResourceAdmin": "django_admin_grpc.admin",
+    "AuditMixin": "django_admin_grpc.admin",
+    "ExportMixin": "django_admin_grpc.admin",
+    "BulkActionMixin": "django_admin_grpc.admin",
+    "grpc_action": "django_admin_grpc.admin",
+    "bulk_grpc_action": "django_admin_grpc.admin",
+    "export_as_csv": "django_admin_grpc.admin",
+    "export_as_excel": "django_admin_grpc.admin",
+    "run_async": "django_admin_grpc.admin",
+    "BaseFieldConfig": "django_admin_grpc.resources",
+    "BaseGrpcResource": "django_admin_grpc.resources",
+    "BooleanFieldConfig": "django_admin_grpc.resources",
+    "CharFieldConfig": "django_admin_grpc.resources",
+    "ChoicesFieldConfig": "django_admin_grpc.resources",
+    "DateFieldConfig": "django_admin_grpc.resources",
+    "DateTimeFieldConfig": "django_admin_grpc.resources",
+    "FKFieldConfig": "django_admin_grpc.resources",
+    "FloatFieldConfig": "django_admin_grpc.resources",
+    "IntegerFieldConfig": "django_admin_grpc.resources",
+    "JSONFieldConfig": "django_admin_grpc.resources",
+    "TextFieldConfig": "django_admin_grpc.resources",
+    "ProtoFieldInspector": "django_admin_grpc.proto_introspect",
+    "BaseGrpcServiceAdapter": "django_admin_grpc.adapters",
+    "BaseAsyncGrpcServiceAdapter": "django_admin_grpc.async_adapter",
+    "AsyncAdapterRegistry": "django_admin_grpc.async_adapter",
+    "async_adapter_registry": "django_admin_grpc.async_adapter",
+    "BaseGrpcMapper": "django_admin_grpc.mappers",
+    "AuditEvent": "django_admin_grpc.audit",
+    "BaseAuditBackend": "django_admin_grpc.audit",
+    "LoggingAuditBackend": "django_admin_grpc.audit",
+    "DjangoModelAuditBackend": "django_admin_grpc.audit",
+    "CompositeAuditBackend": "django_admin_grpc.audit",
+    "GrpcAuditLog": "django_admin_grpc.models",
+    "TenantContextProvider": "django_admin_grpc.context_providers",
+    "AuthTokenProvider": "django_admin_grpc.context_providers",
+    "CorrelationIdProvider": "django_admin_grpc.context_providers",
+    "GrpcAdminError": "django_admin_grpc.exceptions",
+    "GrpcAlreadyExistsError": "django_admin_grpc.exceptions",
+    "GrpcBatchPartialError": "django_admin_grpc.exceptions",
+    "GrpcNotFoundError": "django_admin_grpc.exceptions",
+    "GrpcPermissionDeniedError": "django_admin_grpc.exceptions",
+    "GrpcInvalidArgumentError": "django_admin_grpc.exceptions",
+    "GrpcUnavailableError": "django_admin_grpc.exceptions",
+    "GrpcDeadlineExceededError": "django_admin_grpc.exceptions",
+    "GrpcResourceExhaustedError": "django_admin_grpc.exceptions",
+    "GrpcFailedPreconditionError": "django_admin_grpc.exceptions",
+    "GrpcAbortedError": "django_admin_grpc.exceptions",
+    "GrpcCancelledError": "django_admin_grpc.exceptions",
+    "GrpcPaginator": "django_admin_grpc.paginator",
+    "PagedResult": "django_admin_grpc.paginator",
+    "GrpcBooleanFieldListFilter": "django_admin_grpc.filters",
+    "GrpcChoicesFieldListFilter": "django_admin_grpc.filters",
+    "GrpcSimpleListFilter": "django_admin_grpc.filters",
+    "GrpcTextInputFilter": "django_admin_grpc.filters",
+    "create_grpc_filter_spec": "django_admin_grpc.filters",
+    "AdapterRegistry": "django_admin_grpc.registry",
+    "adapter_registry": "django_admin_grpc.registry",
+    "GrpcChannelPool": "django_admin_grpc.pool",
+    "GrpcAdminCache": "django_admin_grpc.cache",
+    "CachedAdapterMixin": "django_admin_grpc.cache",
+    "chunked": "django_admin_grpc.utils",
+}
+
+
+def __getattr__(name: str) -> object:
+    if name in _import_map:
+        module = __import__(_import_map[name], fromlist=[name], level=0)
+        return getattr(module, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

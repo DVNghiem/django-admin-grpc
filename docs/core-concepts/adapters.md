@@ -26,32 +26,34 @@ class CatalogAdapter(BaseGrpcServiceAdapter):
     def list(self, resource_class, page=1, page_size=25, filters=None):
         stub = CatalogStub(self.channel)
         request = ListProductsRequest(page=page, page_size=page_size)
-        response = stub.ListProducts(request)
+        response = stub.ListProducts(request, metadata=self.get_grpc_metadata())
         items = [resource_class.from_response(r) for r in response.products]
         return PagedResult(items=items, total=response.total)
 
     def get(self, resource_class, pk):
         stub = CatalogStub(self.channel)
-        response = stub.GetProduct(GetProductRequest(id=pk))
+        response = stub.GetProduct(GetProductRequest(id=pk), metadata=self.get_grpc_metadata())
         return resource_class.from_response(response)
 
     def create(self, resource_class, data):
         stub = CatalogStub(self.channel)
         request = CreateProductRequest(**data)
-        response = stub.CreateProduct(request)
+        response = stub.CreateProduct(request, metadata=self.get_grpc_metadata())
         return resource_class.from_response(response)
 
     def update(self, resource_class, pk, data):
         stub = CatalogStub(self.channel)
         request = UpdateProductRequest(id=pk, **data)
-        response = stub.UpdateProduct(request)
+        response = stub.UpdateProduct(request, metadata=self.get_grpc_metadata())
         return resource_class.from_response(response)
 
     def delete(self, resource_class, pk):
         stub = CatalogStub(self.channel)
-        stub.DeleteProduct(DeleteProductRequest(id=pk))
+        stub.DeleteProduct(DeleteProductRequest(id=pk), metadata=self.get_grpc_metadata())
         return True
 ```
+
+Because adapters own the concrete gRPC stub calls, the framework cannot inject metadata automatically. Pass `self.get_grpc_metadata(request)` as `metadata=` on every stub call so configured context providers are honoured.
 
 ### Required Methods
 

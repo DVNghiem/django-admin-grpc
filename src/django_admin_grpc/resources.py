@@ -43,6 +43,13 @@ def resolve_source_path(obj: Any, path: str) -> Any:
     return current
 
 
+def _validate_proto_pk_field(descriptor: Any, pk_field: str) -> None:
+    """Raise ValueError if *pk_field* is not a field on *descriptor*."""
+    field_names = {f.name for f in descriptor.fields}
+    if pk_field not in field_names:
+        raise ValueError(f"pk_field '{pk_field}' is not a field of {descriptor.name}")
+
+
 @dataclass(kw_only=True)
 class BaseFieldConfig:
     """Common metadata for every field on a ``BaseGrpcResource``."""
@@ -142,6 +149,15 @@ class DateFieldConfig(BaseFieldConfig):
     @property
     def type(self) -> str:
         return "date"
+
+
+@dataclass(kw_only=True)
+class JSONFieldConfig(BaseFieldConfig):
+    """Configuration for a JSON-encoded or nested message field."""
+
+    @property
+    def type(self) -> str:
+        return "json"
 
 
 @dataclass(kw_only=True)
@@ -309,3 +325,109 @@ class BaseGrpcResource:
         from django_admin_grpc.forms import FormBuilder
 
         return FormBuilder.build(cls, widgets=widgets)
+
+    proto_descriptor: ClassVar[Any | None] = None
+
+    @classmethod
+    def configure_fields_from_proto(
+        cls,
+        *,
+        exclude: list[str] | None = None,
+        readonly: list[str] | None = None,
+        pk_field: str = "id",
+        field_overrides: dict[str, BaseFieldConfig] | None = None,
+    ) -> list[BaseFieldConfig]:
+        """
+        Populate ``cls.fields`` and ``cls.Meta.pk_field`` from ``cls.proto_descriptor``.
+
+        Returns the generated field configs. Subsequent calls regenerate the list,
+        so this is safe to call lazily ``on first use``.
+        """
+        from django_admin_grpc.proto_introspect import ProtoFieldInspector
+
+        descriptor = cls.proto_descriptor
+        if descriptor is None:
+            raise ValueError(f"{cls.__name__}.proto_descriptor is not set")
+
+        _validate_proto_pk_field(descriptor, pk_field)
+
+        inspector = ProtoFieldInspector(
+            descriptor,
+            exclude=exclude or [],
+            readonly=readonly or [],
+            pk_field=pk_field,
+            field_overrides=field_overrides or {},
+        )
+        configs = inspector.get_field_configs()
+        cls.fields = configs
+        cls.Meta.pk_field = pk_field
+        return configs
+
+    @classmethod
+    def from_proto(
+        cls,
+        descriptor: Any,
+        *,
+        name: str = "",
+        app_label: str = "",
+        model_name: str = "",
+        verbose_name: str = "",
+        verbose_name_plural: str = "",
+        pk_field: str = "id",
+        exclude: list[str] | None = None,
+        readonly: list[str] | None = None,
+        field_overrides: dict[str, BaseFieldConfig] | None = None,
+    ) -> type[BaseGrpcResource]:
+        """
+        Build a new ``BaseGrpcResource`` subclass from a protobuf message descriptor.
+
+        Args:
+            descriptor: A protobuf ``Descriptor`` for the message.
+            name: Class name for the generated resource. Defaults to the descriptor
+                name with ``Resource`` appended.
+            app_label: ``Meta.app_label`` for the resource.
+            model_name: ``Meta.model_name``. Defaults to a lower-cased descriptor name.
+            verbose_name: ``Meta.verbose_name``. Defaults to the descriptor name.
+            verbose_name_plural: ``Meta.verbose_name_plural``.
+            pk_field: Name of the primary-key field.
+            exclude: Field names to omit from the generated config list.
+            readonly: Field names to mark as read-only.
+            field_overrides: Mapping of field name to a custom ``BaseFieldConfig``.
+
+        Returns:
+            A new ``BaseGrpcResource`` subclass with ``proto_descriptor`` and ``fields``.
+        """
+        from django_admin_grpc.proto_introspect import ProtoFieldInspector
+
+        class_name = name or f"{descriptor.name}Resource"
+        model_name = model_name or descriptor.name.lower()
+        verbose_name = verbose_name or descriptor.name.replace("_", " ").title()
+        verbose_name_plural = verbose_name_plural or f"{verbose_name}s"
+
+        _validate_proto_pk_field(descriptor, pk_field)
+
+        inspector = ProtoFieldInspector(
+            descriptor,
+            exclude=exclude or [],
+            readonly=readonly or [],
+            pk_field=pk_field,
+            field_overrides=field_overrides or {},
+        )
+
+        meta_attrs = {
+            "app_label": app_label,
+            "model_name": model_name,
+            "verbose_name": verbose_name,
+            "verbose_name_plural": verbose_name_plural,
+            "pk_field": pk_field,
+        }
+        proto_resource = type(
+            class_name,
+            (BaseGrpcResource,),
+            {
+                "Meta": type("Meta", (), meta_attrs),
+                "fields": inspector.get_field_configs(),
+                "proto_descriptor": descriptor,
+            },
+        )
+        return proto_resource

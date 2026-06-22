@@ -8,6 +8,7 @@ synchronous ``BaseGrpcServiceAdapter`` and ``AdapterRegistry`` APIs.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import threading
 from abc import ABC, abstractmethod
@@ -71,11 +72,42 @@ class BaseAsyncGrpcServiceAdapter(ABC):
     service_name: str = ""
     target: str = ""
     credentials: grpc.ChannelCredentials | None = None
+    grpc_context_providers: list[Any] = []
 
     def __init__(self) -> None:
         self._channel: grpc.aio.Channel | None = None
         self._channel_lock = asyncio.Lock()
         ensure_aio_initialized()
+
+    def get_grpc_metadata(self, request: Any | None = None) -> list[tuple[str, str]]:
+        """
+        Build gRPC metadata from global and adapter-level context providers.
+
+        Mirrors ``BaseGrpcServiceAdapter.get_grpc_metadata`` for async adapters.
+        """
+        from django_admin_grpc.settings import get_setting
+
+        metadata: dict[str, str] = {}
+
+        global_providers = get_setting("GRPC_ADMIN_CONTEXT_PROVIDERS") or []
+        providers: list[Any] = []
+        for provider in global_providers:
+            if isinstance(provider, str):
+                from django.utils.module_loading import import_string
+
+                providers.append(import_string(provider))
+            elif callable(provider):
+                providers.append(provider)
+
+        providers.extend(self.grpc_context_providers)
+
+        for provider in providers:
+            try:
+                metadata.update(provider(request) if request is not None else provider(None))
+            except Exception:
+                logger.exception("gRPC async context provider failed")
+
+        return list(metadata.items())
 
     @abstractmethod
     async def list(
@@ -84,6 +116,7 @@ class BaseAsyncGrpcServiceAdapter(ABC):
         page: int = 1,
         page_size: int = 25,
         filters: dict[str, Any] | None = None,
+        request: Any | None = None,
     ) -> PagedResult:
         """Fetch a page of entities asynchronously."""
         ...
@@ -93,6 +126,7 @@ class BaseAsyncGrpcServiceAdapter(ABC):
         self,
         resource_class: type[BaseGrpcResource],
         pk: str,
+        request: Any | None = None,
     ) -> BaseGrpcResource | None:
         """Fetch a single entity by primary key asynchronously."""
         ...
@@ -101,6 +135,7 @@ class BaseAsyncGrpcServiceAdapter(ABC):
         self,
         resource_class: type[BaseGrpcResource],
         pks: Sequence[Any],
+        request: Any | None = None,
     ) -> dict[Any, BaseGrpcResource | None]:
         """
         Fetch multiple entities by primary key asynchronously.
@@ -112,6 +147,8 @@ class BaseAsyncGrpcServiceAdapter(ABC):
             return result
 
         async def _fetch(pk: Any) -> tuple[Any, BaseGrpcResource | None]:
+            if self._method_accepts_request(self.get):
+                return pk, await self.get(resource_class, str(pk), request=request)
             return pk, await self.get(resource_class, str(pk))
 
         fetched = await asyncio.gather(*(_fetch(pk) for pk in pks))
@@ -123,6 +160,7 @@ class BaseAsyncGrpcServiceAdapter(ABC):
         self,
         resource_class: type[BaseGrpcResource],
         data: dict[str, Any],
+        request: Any | None = None,
     ) -> BaseGrpcResource:
         """Create a new entity via gRPC asynchronously."""
         raise NotImplementedError(f"{self.__class__.__name__} does not support create")
@@ -132,6 +170,7 @@ class BaseAsyncGrpcServiceAdapter(ABC):
         resource_class: type[BaseGrpcResource],
         pk: str,
         data: dict[str, Any],
+        request: Any | None = None,
     ) -> BaseGrpcResource:
         """Update an existing entity via gRPC asynchronously."""
         raise NotImplementedError(f"{self.__class__.__name__} does not support update")
@@ -140,6 +179,7 @@ class BaseAsyncGrpcServiceAdapter(ABC):
         self,
         resource_class: type[BaseGrpcResource],
         pk: str,
+        request: Any | None = None,
     ) -> bool:
         """Delete an entity via gRPC asynchronously."""
         raise NotImplementedError(f"{self.__class__.__name__} does not support delete")
@@ -154,6 +194,7 @@ class BaseAsyncGrpcServiceAdapter(ABC):
         items: list[dict[str, Any]],  # type: ignore[valid-type]
         *,
         batch_size: int | None = None,
+        request: Any | None = None,
     ) -> list[BaseGrpcResource]:  # type: ignore[valid-type]
         """
         Create multiple entities via gRPC, chunked.
@@ -185,7 +226,10 @@ class BaseAsyncGrpcServiceAdapter(ABC):
                 # Stable key: the index of the input across all chunks.
                 index = len(succeeded_inputs) + len(failed)
                 try:
-                    created.append(await self.create(resource_class, data))
+                    if self._method_accepts_request(self.create):
+                        created.append(await self.create(resource_class, data, request=request))
+                    else:
+                        created.append(await self.create(resource_class, data))
                     succeeded_inputs.append(data)
                 except Exception as exc:
                     failed[index] = exc
@@ -210,6 +254,7 @@ class BaseAsyncGrpcServiceAdapter(ABC):
         items: list[dict[str, Any]],  # type: ignore[valid-type]
         *,
         batch_size: int | None = None,
+        request: Any | None = None,
     ) -> list[BaseGrpcResource]:  # type: ignore[valid-type]
         """
         Update multiple entities via gRPC, chunked.
@@ -250,7 +295,12 @@ class BaseAsyncGrpcServiceAdapter(ABC):
                     )
                     continue
                 try:
-                    updated.append(await self.update(resource_class, str(pk), data))
+                    if self._method_accepts_request(self.update):
+                        updated.append(
+                            await self.update(resource_class, str(pk), data, request=request)
+                        )
+                    else:
+                        updated.append(await self.update(resource_class, str(pk), data))
                     succeeded_pks.append(pk)
                 except Exception as exc:
                     failed[pk] = exc
@@ -275,6 +325,7 @@ class BaseAsyncGrpcServiceAdapter(ABC):
         pks: list[Any],  # type: ignore[valid-type]
         *,
         batch_size: int | None = None,
+        request: Any | None = None,
     ) -> dict[str, Any]:
         """
         Delete multiple entities by primary key, chunked.
@@ -302,7 +353,10 @@ class BaseAsyncGrpcServiceAdapter(ABC):
             pk: Any
             for pk in chunk:
                 try:
-                    await self.delete(resource_class, str(pk))
+                    if self._method_accepts_request(self.delete):
+                        await self.delete(resource_class, str(pk), request=request)
+                    else:
+                        await self.delete(resource_class, str(pk))
                     succeeded_pks.append(pk)
                 except Exception as exc:
                     failed[pk] = exc
@@ -332,6 +386,13 @@ class BaseAsyncGrpcServiceAdapter(ABC):
     @property
     def supports_delete(self) -> bool:
         return type(self).delete is not BaseAsyncGrpcServiceAdapter.delete
+
+    @staticmethod
+    def _method_accepts_request(method: Any) -> bool:
+        try:
+            return "request" in inspect.signature(method).parameters
+        except (TypeError, ValueError):
+            return False
 
     async def channel(self) -> grpc.aio.Channel:
         """Return the lazily initialized async gRPC channel."""

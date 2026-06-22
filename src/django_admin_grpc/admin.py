@@ -10,11 +10,17 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import csv
 import functools
 import hashlib
+import inspect
+import io
+import json
 import logging
 import threading
+import uuid
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any, cast
 from urllib.parse import urlencode
 
@@ -23,12 +29,23 @@ from django.contrib import messages
 from django.contrib.admin import ModelAdmin
 from django.contrib.admin.views.main import ChangeList
 from django.core.exceptions import PermissionDenied
-from django.http import HttpRequest, HttpResponseRedirect
+from django.http import (
+    HttpRequest,
+    HttpResponse,
+    HttpResponseForbidden,
+    HttpResponseRedirect,
+    StreamingHttpResponse,
+)
 from django.template.response import TemplateResponse
-from django.urls import reverse
+from django.urls import NoReverseMatch, reverse
 
 from django_admin_grpc.adapters import BaseGrpcServiceAdapter
 from django_admin_grpc.async_adapter import BaseAsyncGrpcServiceAdapter
+from django_admin_grpc.audit import (
+    AuditEvent,
+    BaseAuditBackend,
+    load_audit_backend,
+)
 from django_admin_grpc.exceptions import (
     GrpcAdminError,
     GrpcBatchPartialError,
@@ -37,6 +54,7 @@ from django_admin_grpc.exceptions import (
 from django_admin_grpc.models import GrpcFakeQuerySet, ModelWrapper
 from django_admin_grpc.paginator import GrpcPaginator, PagedResult, compute_filter_fingerprint
 from django_admin_grpc.resources import BaseGrpcResource
+from django_admin_grpc.settings import get_setting
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +177,525 @@ def bulk_grpc_action(
     return decorator
 
 
+class ExportMixin:
+    """
+    Adds CSV and Excel export actions to ``GrpcResourceAdmin``.
+
+    The mixin respects active list filters and fetches all pages until the
+    result set is exhausted or ``export_max_rows`` is reached.
+    """
+
+    export_fields: list[str] | None = None
+    export_max_rows: int = 10000
+    export_filename_prefix: str = ""
+
+    def has_export_permission(self, request: HttpRequest) -> bool:
+        """Return ``True`` if the user may export records."""
+        return self.has_view_permission(request)
+
+    def export_as_csv(self, request: HttpRequest, queryset: Any) -> HttpResponse:
+        """Export the current filtered result set as a UTF-8 CSV file."""
+        if not self.has_export_permission(request):
+            return HttpResponseForbidden("Export not allowed.")
+
+        fields = self._get_export_fields(request)
+        rows = self._fetch_all_for_export(request)
+        headers = [self._get_export_header(f) for f in fields]
+        filename = self._export_filename("csv")
+
+        def _generate() -> Any:
+            buffer = io.StringIO()
+            writer = csv.writer(buffer)
+            writer.writerow(headers)
+            yield buffer.getvalue().encode("utf-8-sig")
+            buffer.seek(0)
+            buffer.truncate(0)
+            for row in rows:
+                writer.writerow([self._export_value(row, f) for f in fields])
+                yield buffer.getvalue().encode("utf-8")
+                buffer.seek(0)
+                buffer.truncate(0)
+
+        response = StreamingHttpResponse(_generate(), content_type="text/csv")
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return response
+
+    def export_as_excel(self, request: HttpRequest, queryset: Any) -> HttpResponse:
+        """Export the current filtered result set as an Excel workbook."""
+        if not self.has_export_permission(request):
+            return HttpResponseForbidden("Export not allowed.")
+
+        try:
+            import openpyxl
+        except ImportError as exc:
+            raise ImportError("Install openpyxl to use Excel export: pip install openpyxl") from exc
+
+        fields = self._get_export_fields(request)
+        rows = self._fetch_all_for_export(request)
+        headers = [self._get_export_header(f) for f in fields]
+
+        workbook = openpyxl.Workbook()
+        worksheet = workbook.active
+        worksheet.title = self._fake_model._meta.verbose_name[:31] or "Export"
+        worksheet.append(headers)
+        for row in rows:
+            worksheet.append([self._export_value(row, f) for f in fields])
+
+        output = io.BytesIO()
+        workbook.save(output)
+        output.seek(0)
+
+        filename = self._export_filename("xlsx")
+        response = HttpResponse(
+            output.read(),
+            content_type=("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+        )
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return response
+
+    def _get_export_fields(self, request: HttpRequest) -> list[str]:
+        if self.export_fields:
+            return list(self.export_fields)
+        display = self.get_list_display(request)
+        # ``get_list_display`` may return the action checkbox pseudo-field.
+        return [f for f in display if isinstance(f, str) and f != "action_checkbox"]
+
+    def _get_export_header(self, field_name: str) -> str:
+        config = self._resource_class.get_field_config(field_name)
+        if config is not None:
+            return str(config.label or config.name)
+        return field_name.replace("_", " ").title()
+
+    def _export_value(self, row: Any, field_name: str) -> str:
+        value = getattr(row, field_name, None)
+        if value is None:
+            return ""
+        if isinstance(value, bool):
+            return str(value)
+        if isinstance(value, (list, dict)):
+            return json.dumps(value, default=str)
+        return str(value)
+
+    def _export_filename(self, extension: str) -> str:
+        prefix = self.export_filename_prefix
+        model_name = (
+            getattr(self, "_fake_model", None) and self._fake_model._meta.model_name or "export"
+        )
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        return f"{prefix}{model_name}_{timestamp}.{extension}"
+
+    def _fetch_all_for_export(self, request: HttpRequest) -> list[Any]:
+        filters = self.get_grpc_filters(request)
+        search_query = request.GET.get("q", "")
+        if search_query:
+            filters["search"] = search_query
+
+        page_size = get_setting("GRPC_ADMIN_MAX_PAGE_SIZE") or 100
+        max_rows = self.export_max_rows
+        rows: list[Any] = []
+        is_cursor = getattr(self, "grpc_cursor_pagination", False)
+        page = 1
+
+        while len(rows) < max_rows:
+            result = self.fetch_list(
+                page=page,
+                page_size=page_size,
+                filters=filters,
+                request=request,
+            )
+            items = result.items if isinstance(result, PagedResult) else result.get("items", [])
+            if not items:
+                break
+            rows.extend(items)
+            if is_cursor:
+                next_cursor = (
+                    result.next_cursor
+                    if isinstance(result, PagedResult)
+                    else result.get("next_cursor")
+                )
+                if next_cursor:
+                    filters["cursor"] = next_cursor
+                    continue
+                break
+            page += 1
+
+        return rows[:max_rows]
+
+    def _add_export_actions(self, request: HttpRequest, actions: dict[str, Any]) -> None:
+        if not self.has_export_permission(request):
+            return
+        actions["export_as_csv"] = (
+            self.__class__.export_as_csv,
+            "export_as_csv",
+            "Export selected %(verbose_name_plural)s as CSV",
+        )
+        actions["export_as_excel"] = (
+            self.__class__.export_as_excel,
+            "export_as_excel",
+            "Export selected %(verbose_name_plural)s as Excel",
+        )
+
+
+export_as_csv = ExportMixin.export_as_csv
+export_as_excel = ExportMixin.export_as_excel
+
+
+class AuditMixin:
+    """
+    Capture audit events for every admin write operation.
+
+    The mixin wraps ``_adapter_create``, ``_adapter_update`` and
+    ``_adapter_delete`` so that before/after snapshots are logged. Failed
+    operations are logged with ``success=False``.
+    """
+
+    audit_backend: BaseAuditBackend | type[BaseAuditBackend] | str | None = None
+    audit_enabled: bool = True
+    auto_configure_from_proto: bool = False
+    auto_configure_from_proto_options: dict[str, Any] | None = None
+
+    _audit_local = threading.local()
+
+    def _get_audit_request(self) -> HttpRequest | None:
+        return getattr(self._audit_local, "request", None)
+
+    def _set_audit_request(self, request: HttpRequest) -> None:
+        self._audit_local.request = request
+
+    def _clear_audit_request(self) -> None:
+        self._audit_local.request = None
+
+    def _audit_request_context(self, request: HttpRequest) -> Any:
+        """Context manager that binds *request* to the audit thread-local."""
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _cm():
+            self._set_audit_request(request)
+            try:
+                yield
+            finally:
+                self._clear_audit_request()
+
+        return _cm()
+
+    def get_audit_backend(self) -> BaseAuditBackend:
+        """Return the resolved audit backend instance for this admin."""
+        cache_attr = "_audit_backend_instance"
+        backend = getattr(self, cache_attr, None)
+        if backend is not None:
+            return backend
+
+        configured = self.audit_backend
+        if configured is None:
+            configured = load_audit_backend()
+        backend = load_audit_backend(configured)
+        setattr(self, cache_attr, backend)
+        return backend
+
+    def audit_extra_context(self, request: HttpRequest | None) -> dict[str, Any]:
+        """Return extra metadata to attach to every audit event."""
+        return {}
+
+    def _audit_user(self, request: HttpRequest | None) -> str | None:
+        if request is None:
+            return None
+        user = getattr(request, "user", None)
+        if user is None:
+            return None
+        if hasattr(user, "get_username"):
+            username = user.get_username()
+            if username:
+                return username
+            return None
+        username = str(user)
+        return username if username else None
+
+    def _audit_request_id(self, request: HttpRequest | None) -> str | None:
+        if request is None:
+            return None
+        rid = getattr(request, "_grpc_request_id", None)
+        if rid:
+            return rid
+        return request.META.get("HTTP_X_REQUEST_ID") or str(uuid.uuid4())
+
+    def _audit_now(self) -> datetime:
+
+        return datetime.now(UTC)
+
+    def _audit_diff(
+        self,
+        operation: str,
+        before: dict[str, Any] | None,
+        after: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if operation == "create":
+            return after
+        if operation == "delete":
+            return before
+        if not isinstance(before, dict) or not isinstance(after, dict):
+            return None
+        diff: dict[str, Any] = {}
+        keys = set(before.keys()) | set(after.keys())
+        for key in keys:
+            b = before.get(key)
+            a = after.get(key)
+            if b != a:
+                diff[key] = {"before": b, "after": a}
+        return diff or None
+
+    def _log_audit_event(
+        self,
+        *,
+        operation: str,
+        pk: Any,
+        before: dict[str, Any] | None,
+        after: dict[str, Any] | None,
+        success: bool,
+        error: str | None,
+    ) -> None:
+        if not self.audit_enabled:
+            return
+        request = self._get_audit_request()
+        event = AuditEvent(
+            resource_name=getattr(self._resource_class, "__name__", str(self._resource_class)),
+            operation=operation,
+            pk=pk,
+            user=self._audit_user(request),
+            timestamp=self._audit_now(),
+            before=before,
+            after=after,
+            diff=self._audit_diff(operation, before, after),
+            success=success,
+            error=error,
+            request_id=self._audit_request_id(request),
+            extra=self.audit_extra_context(request),
+        )
+        try:
+            self.get_audit_backend().log(event)
+        except Exception:
+            logger.exception("Failed to log audit event")
+
+    def _audit_fetch_before(
+        self, adapter: Any, resource_class: type[BaseGrpcResource], pk: str
+    ) -> dict[str, Any] | None:
+        try:
+            method = getattr(adapter, "get", None)
+            if method is None:
+                return None
+            request = self._get_audit_request()
+            if self._method_accepts_request(method):
+                before_obj = method(resource_class, pk, request=request)
+            else:
+                before_obj = method(resource_class, pk)
+            if inspect.iscoroutinefunction(method):
+                before_obj = run_async(before_obj)
+            if before_obj is not None and hasattr(before_obj, "to_dict"):
+                return before_obj.to_dict()
+            return None
+        except Exception:
+            return None
+
+    def _audit_fetch_before_list(
+        self,
+        adapter: Any,
+        resource_class: type[BaseGrpcResource],
+        pks: list[Any],
+    ) -> list[dict[str, Any]]:
+        """Return before-snapshots for *pks*, ignoring failures."""
+        before: list[dict[str, Any]] = []
+        for pk in pks:
+            snapshot = self._audit_fetch_before(adapter, resource_class, str(pk))
+            if snapshot is not None:
+                before.append(snapshot)
+        return before
+
+    @staticmethod
+    def _method_accepts_request(method: Callable[..., Any]) -> bool:
+        try:
+            return "request" in inspect.signature(method).parameters
+        except (TypeError, ValueError):
+            return False
+
+    def _adapter_create(
+        self,
+        adapter: BaseGrpcServiceAdapter | BaseAsyncGrpcServiceAdapter,
+        resource_class: type[BaseGrpcResource],
+        data: dict[str, Any],
+    ) -> BaseGrpcResource:
+        """Create a record and emit an audit event."""
+        try:
+            method = adapter.create
+            request = self._get_audit_request()
+            if isinstance(adapter, BaseAsyncGrpcServiceAdapter):
+                if self._method_accepts_request(method):
+                    created = run_async(method(resource_class, data, request=request))
+                else:
+                    created = run_async(method(resource_class, data))
+            elif self._method_accepts_request(method):
+                created = method(resource_class, data, request=request)
+            else:
+                created = method(resource_class, data)
+            created = cast(BaseGrpcResource, created)
+            self._log_audit_event(
+                operation="create",
+                pk=getattr(created, "pk", None),
+                before=None,
+                after=created.to_dict() if hasattr(created, "to_dict") else None,
+                success=True,
+                error=None,
+            )
+            return created
+        except Exception as exc:
+            self._log_audit_event(
+                operation="create",
+                pk=None,
+                before=None,
+                after=None,
+                success=False,
+                error=str(exc),
+            )
+            raise
+
+    def _adapter_update(
+        self,
+        adapter: BaseGrpcServiceAdapter | BaseAsyncGrpcServiceAdapter,
+        resource_class: type[BaseGrpcResource],
+        pk: str,
+        data: dict[str, Any],
+    ) -> BaseGrpcResource:
+        """Update a record and emit an audit event."""
+        before = self._audit_fetch_before(adapter, resource_class, pk)
+        try:
+            method = adapter.update
+            request = self._get_audit_request()
+            if isinstance(adapter, BaseAsyncGrpcServiceAdapter):
+                if self._method_accepts_request(method):
+                    updated = run_async(method(resource_class, pk, data, request=request))
+                else:
+                    updated = run_async(method(resource_class, pk, data))
+            elif self._method_accepts_request(method):
+                updated = method(resource_class, pk, data, request=request)
+            else:
+                try:
+                    updated = method(resource_class, pk=pk, data=data)
+                except TypeError:
+                    updated = method(resource_class, pk, data)
+            updated = cast(BaseGrpcResource, updated)
+            self._log_audit_event(
+                operation="update",
+                pk=pk,
+                before=before,
+                after=updated.to_dict() if hasattr(updated, "to_dict") else None,
+                success=True,
+                error=None,
+            )
+            return updated
+        except Exception as exc:
+            self._log_audit_event(
+                operation="update",
+                pk=pk,
+                before=before,
+                after=None,
+                success=False,
+                error=str(exc),
+            )
+            raise
+
+    def _adapter_delete(
+        self,
+        adapter: BaseGrpcServiceAdapter | BaseAsyncGrpcServiceAdapter,
+        resource_class: type[BaseGrpcResource],
+        pk: str,
+    ) -> bool:
+        """Delete a record and emit an audit event."""
+        before = self._audit_fetch_before(adapter, resource_class, pk)
+        try:
+            method = adapter.delete
+            request = self._get_audit_request()
+            if isinstance(adapter, BaseAsyncGrpcServiceAdapter):
+                if self._method_accepts_request(method):
+                    result = run_async(method(resource_class, pk, request=request))
+                else:
+                    result = run_async(method(resource_class, pk))
+            elif self._method_accepts_request(method):
+                result = method(resource_class, pk, request=request)
+            else:
+                result = method(resource_class, pk)
+            self._log_audit_event(
+                operation="delete",
+                pk=pk,
+                before=before,
+                after=None,
+                success=True,
+                error=None,
+            )
+            return cast(bool, result)
+        except Exception as exc:
+            self._log_audit_event(
+                operation="delete",
+                pk=pk,
+                before=before,
+                after=None,
+                success=False,
+                error=str(exc),
+            )
+            raise
+
+    def add_view(
+        self,
+        request: HttpRequest,
+        form_url: str = "",
+        extra_context: dict[str, Any] | None = None,
+    ) -> TemplateResponse | HttpResponseRedirect:
+        with self._audit_request_context(request):
+            return super().add_view(request, form_url, extra_context)  # type: ignore[misc]
+
+    def change_view(
+        self,
+        request: HttpRequest,
+        object_id: str,
+        form_url: str = "",
+        extra_context: dict[str, Any] | None = None,
+    ) -> TemplateResponse | HttpResponseRedirect:
+        with self._audit_request_context(request):
+            return super().change_view(request, object_id, form_url, extra_context)  # type: ignore[misc]
+
+    def delete_view(
+        self,
+        request: HttpRequest,
+        object_id: str,
+        extra_context: dict[str, Any] | None = None,
+    ) -> TemplateResponse | HttpResponseRedirect:
+        with self._audit_request_context(request):
+            return super().delete_view(request, object_id, extra_context)  # type: ignore[misc]
+
+    def apply_grpc_bulk_update(
+        self,
+        request: HttpRequest,
+        queryset: Any,
+        data: dict[str, Any],
+    ) -> tuple[int, int]:
+        with self._audit_request_context(request):
+            return super().apply_grpc_bulk_update(request, queryset, data)  # type: ignore[misc]
+
+    def apply_grpc_bulk_delete(
+        self,
+        request: HttpRequest,
+        queryset: Any,
+    ) -> dict[str, Any] | None:
+        with self._audit_request_context(request):
+            return super().apply_grpc_bulk_delete(request, queryset)  # type: ignore[misc]
+
+    def bulk_create_action(self, request: HttpRequest, queryset: Any) -> None:
+        with self._audit_request_context(request):
+            super().bulk_create_action(request, queryset)  # type: ignore[misc]
+
+    def bulk_update_action(self, request: HttpRequest, queryset: Any) -> None:
+        with self._audit_request_context(request):
+            super().bulk_update_action(request, queryset)  # type: ignore[misc]
+
+
 class BulkActionMixin:
     """
     Adds bulk actions on top of :class:`GrpcResourceAdmin`.
@@ -218,27 +755,45 @@ class BulkActionMixin:
         if adapter is None:
             messages.error(request, "gRPC adapter not available.")
             return
+        created: list[BaseGrpcResource] = []
         try:
             if isinstance(adapter, BaseAsyncGrpcServiceAdapter):
                 # Async adapter: ``bulk_create`` is a coroutine.
                 created = cast(
                     list[BaseGrpcResource],
                     run_async(
-                        adapter.bulk_create(self._resource_class, items)  # type: ignore[attr-defined]
+                        adapter.bulk_create(self._resource_class, items, request=request)  # type: ignore[attr-defined]
                     ),
                 )
             else:
-                created = adapter.bulk_create(  # type: ignore[attr-defined]
-                    self._resource_class, items
-                )
+                if self._method_accepts_request(adapter.bulk_create):
+                    created = adapter.bulk_create(self._resource_class, items, request=request)  # type: ignore[attr-defined]
+                else:
+                    created = adapter.bulk_create(self._resource_class, items)  # type: ignore[attr-defined]
         except GrpcBatchPartialError as exc:
             messages.warning(
                 request,
                 f"Created {len(exc.succeeded)} of {len(items)} record(s); "
                 f"{len(exc.failed)} failed.",
             )
+            self._log_audit_event(
+                operation="bulk_create",
+                pk=None,
+                before=None,
+                after=None,
+                success=False,
+                error=f"Partial failure: {len(exc.succeeded)} succeeded, {len(exc.failed)} failed",
+            )
             return
         messages.success(request, f"Created {len(created)} record(s).")
+        self._log_audit_event(
+            operation="bulk_create",
+            pk=None,
+            before=None,
+            after=[item.to_dict() for item in created] if created else None,
+            success=True,
+            error=None,
+        )
 
     def bulk_update_action(self, request: HttpRequest, queryset: Any) -> None:
         """
@@ -250,27 +805,47 @@ class BulkActionMixin:
         if adapter is None:
             messages.error(request, "gRPC adapter not available.")
             return
+        selected_pks = self.get_grpc_selected_pks(request, queryset)  # type: ignore[attr-defined]
+        before = self._audit_fetch_before_list(adapter, self._resource_class, selected_pks)
+        updated: list[BaseGrpcResource] = []
         try:
             if isinstance(adapter, BaseAsyncGrpcServiceAdapter):
                 # Async adapter: ``bulk_update`` is a coroutine.
                 updated = cast(
                     list[BaseGrpcResource],
                     run_async(
-                        adapter.bulk_update(self._resource_class, items)  # type: ignore[attr-defined]
+                        adapter.bulk_update(self._resource_class, items, request=request)  # type: ignore[attr-defined]
                     ),
                 )
             else:
-                updated = adapter.bulk_update(  # type: ignore[attr-defined]
-                    self._resource_class, items
-                )
+                if self._method_accepts_request(adapter.bulk_update):
+                    updated = adapter.bulk_update(self._resource_class, items, request=request)  # type: ignore[attr-defined]
+                else:
+                    updated = adapter.bulk_update(self._resource_class, items)  # type: ignore[attr-defined]
         except GrpcBatchPartialError as exc:
             messages.warning(
                 request,
                 f"Updated {len(exc.succeeded)} of {len(items)} record(s); "
                 f"{len(exc.failed)} failed.",
             )
+            self._log_audit_event(
+                operation="bulk_update",
+                pk=None,
+                before=before or None,
+                after=None,
+                success=False,
+                error=f"Partial failure: {len(exc.succeeded)} succeeded, {len(exc.failed)} failed",
+            )
             return
         messages.success(request, f"Updated {len(updated)} record(s).")
+        self._log_audit_event(
+            operation="bulk_update",
+            pk=None,
+            before=before or None,
+            after=[item.to_dict() for item in updated] if updated else None,
+            success=True,
+            error=None,
+        )
 
     bulk_delete_action.short_description = (  # type: ignore[attr-defined]
         "Delete selected %(verbose_name_plural)s"
@@ -345,22 +920,47 @@ class BulkActionMixin:
         if not selected_pks:
             return {"deleted": 0, "failed": []}
 
+        before = self._audit_fetch_before_list(adapter, self._resource_class, selected_pks)
+
         # Async adapters are not coroutines themselves; route through
         # ``run_async`` when the resolved adapter is async.
         if isinstance(adapter, BaseAsyncGrpcServiceAdapter):
             try:
                 result = cast(
                     dict[str, Any] | None,
-                    run_async(adapter.bulk_delete(self._resource_class, selected_pks)),
+                    run_async(
+                        adapter.bulk_delete(self._resource_class, selected_pks, request=request)
+                    ),
                 )
             except GrpcBatchPartialError as exc:
                 self._report_bulk_delete_failure(request, exc)
+                self._log_audit_event(
+                    operation="bulk_delete",
+                    pk=None,
+                    before=before or None,
+                    after=None,
+                    success=False,
+                    error=f"Partial failure: {len(exc.succeeded)} succeeded, {len(exc.failed)} failed",
+                )
                 return None
         else:
             try:
-                result = adapter.bulk_delete(self._resource_class, selected_pks)  # type: ignore[attr-defined]
+                if self._method_accepts_request(adapter.bulk_delete):
+                    result = adapter.bulk_delete(
+                        self._resource_class, selected_pks, request=request
+                    )  # type: ignore[attr-defined]
+                else:
+                    result = adapter.bulk_delete(self._resource_class, selected_pks)  # type: ignore[attr-defined]
             except GrpcBatchPartialError as exc:
                 self._report_bulk_delete_failure(request, exc)
+                self._log_audit_event(
+                    operation="bulk_delete",
+                    pk=None,
+                    before=before or None,
+                    after=None,
+                    success=False,
+                    error=f"Partial failure: {len(exc.succeeded)} succeeded, {len(exc.failed)} failed",
+                )
                 return None
 
         if result is None:
@@ -372,7 +972,57 @@ class BulkActionMixin:
                 request,
                 f"Successfully deleted {deleted_count} record(s).",
             )
+        self._log_audit_event(
+            operation="bulk_delete",
+            pk=None,
+            before=before or None,
+            after={"deleted": deleted_count},
+            success=True,
+            error=None,
+        )
         return result
+
+    def apply_grpc_bulk_update(
+        self,
+        request: HttpRequest,
+        queryset: Any,
+        data: dict[str, Any],
+    ) -> tuple[int, int]:
+        """
+        Update selected records with the same payload via the adapter's
+        ``update`` method.
+
+        Supports both a Django queryset (standard actions) and a list of
+        PKs (from :func:`grpc_action`).
+
+        Returns a ``(updated_count, error_count)`` tuple.
+        """
+        adapter = self.get_adapter()  # type: ignore[attr-defined]
+        if adapter is None:
+            messages.error(request, "gRPC adapter not available.")
+            return 0, 0
+
+        # Support passing selected_pks directly (e.g. from @grpc_action)
+        if isinstance(queryset, (list, tuple)):
+            selected_pks = list(queryset)
+        else:
+            selected_pks = self.get_grpc_selected_pks(request, queryset)  # type: ignore[attr-defined]
+
+        updated = 0
+        errors = 0
+        for pk in selected_pks:
+            try:
+                self._adapter_update(adapter, self._resource_class, pk, data)  # type: ignore[attr-defined]
+                updated += 1
+            except GrpcAdminError as exc:
+                logger.warning("gRPC bulk update failed for pk=%s: %s", pk, exc)
+                errors += 1
+                level, message = get_grpc_error_message(exc)
+                messages.add_message(request, level, message)
+            except Exception as exc:
+                logger.warning("gRPC bulk update failed for pk=%s: %s", pk, exc)
+                errors += 1
+        return updated, errors
 
     def _report_bulk_delete_failure(
         self,
@@ -679,7 +1329,7 @@ class GrpcChangeList(ChangeList):
 
         try:
             result = self._grpc_model_admin.fetch_list(
-                page=page_num, page_size=page_size, filters=filters
+                page=page_num, page_size=page_size, filters=filters, request=request
             )
             items = result.items if isinstance(result, PagedResult) else result.get("items", [])
             total = (
@@ -748,7 +1398,7 @@ class GrpcChangeList(ChangeList):
             messages.info(request, "No data found or error fetching data.")
 
 
-class GrpcResourceAdmin(BulkActionMixin, ModelAdmin):
+class GrpcResourceAdmin(AuditMixin, ExportMixin, BulkActionMixin, ModelAdmin):
     """
     Admin class for resources fetched from a gRPC service.
 
@@ -767,9 +1417,12 @@ class GrpcResourceAdmin(BulkActionMixin, ModelAdmin):
     * ``grpc_cursor_pagination`` – use cursor-based pagination.
     * ``grpc_bulk_create_enabled`` / ``grpc_bulk_update_enabled`` – opt-in
       flags to expose ``bulk_create_action`` / ``bulk_update_action``.
+    * ``auto_configure_from_proto`` – when ``True`` and the resource has a
+      ``proto_descriptor``, fields are generated automatically on first use.
 
-    Inherits :class:`BulkActionMixin` for built-in bulk delete and opt-in
-    bulk create/update actions.
+    Inherits :class:`AuditMixin` for write-operation auditing,
+    :class:`ExportMixin` for CSV/Excel export actions, and
+    :class:`BulkActionMixin` for built-in bulk operations.
     """
 
     resource_class: type[BaseGrpcResource] | None = None
@@ -790,6 +1443,15 @@ class GrpcResourceAdmin(BulkActionMixin, ModelAdmin):
         if self.resource_class is None:
             raise ValueError(f"{self.__class__.__name__} must define resource_class")
         self._resource_class: type[BaseGrpcResource] = self.resource_class
+
+        if (
+            self.auto_configure_from_proto
+            and getattr(self._resource_class, "proto_descriptor", None) is not None
+            and not self._resource_class.fields
+        ):
+            options = getattr(self, "auto_configure_from_proto_options", None) or {}
+            self._resource_class.configure_fields_from_proto(**options)
+
         self._fake_model = self._resource_class.admin_model()
         super().__init__(self._fake_model, admin_site)  # type: ignore[arg-type]
         self._adapter: BaseGrpcServiceAdapter | BaseAsyncGrpcServiceAdapter | None = None
@@ -890,6 +1552,7 @@ class GrpcResourceAdmin(BulkActionMixin, ModelAdmin):
                     "Update selected %(verbose_name_plural)s",
                 ),
             )
+        self._add_export_actions(request, actions)
         return actions
 
     def _grpc_delete_selected(self, request: HttpRequest, queryset: Any) -> None:
@@ -910,39 +1573,6 @@ class GrpcResourceAdmin(BulkActionMixin, ModelAdmin):
             "_selected_action"
         )
         return list(selected or [])
-
-    def apply_grpc_bulk_update(
-        self,
-        request: HttpRequest,
-        queryset: Any,
-        data: dict[str, Any],
-    ) -> tuple[int, int]:
-        adapter = self.get_adapter()
-        if adapter is None:
-            messages.error(request, "gRPC adapter not available.")
-            return 0, 0
-
-        # Support passing selected_pks directly (e.g. from @grpc_action)
-        if isinstance(queryset, (list, tuple)):
-            selected_pks = list(queryset)
-        else:
-            selected_pks = self.get_grpc_selected_pks(request, queryset)
-
-        updated = 0
-        errors = 0
-        for pk in selected_pks:
-            try:
-                self._adapter_update(adapter, self._resource_class, pk, data)
-                updated += 1
-            except GrpcAdminError as exc:
-                logger.warning("gRPC bulk update failed for pk=%s: %s", pk, exc)
-                errors += 1
-                level, message = get_grpc_error_message(exc)
-                messages.add_message(request, level, message)
-            except Exception as exc:
-                logger.warning("gRPC bulk update failed for pk=%s: %s", pk, exc)
-                errors += 1
-        return updated, errors
 
     # ── Adapter plumbing ───────────────────────────────────────────────────
 
@@ -1045,6 +1675,7 @@ class GrpcResourceAdmin(BulkActionMixin, ModelAdmin):
         page: int = 1,
         page_size: int = 25,
         filters: dict[str, Any] | None = None,
+        request: HttpRequest | None = None,
     ) -> PagedResult | dict[str, Any]:
         adapter = self.get_adapter()
         if adapter is None:
@@ -1058,13 +1689,23 @@ class GrpcResourceAdmin(BulkActionMixin, ModelAdmin):
             kwargs["page"] = page
             kwargs["page_size"] = page_size
 
+        method = adapter.list
+        if isinstance(adapter, BaseAsyncGrpcServiceAdapter):
+            if self._method_accepts_request(method):
+                kwargs["request"] = request
+            return cast(
+                PagedResult | dict[str, Any],
+                run_async(method(self._resource_class, **kwargs)),
+            )
+        if self._method_accepts_request(method):
+            kwargs["request"] = request
         return cast(BaseGrpcServiceAdapter, adapter).list(self._resource_class, **kwargs)
 
-    def fetch_one(self, pk: str) -> ModelWrapper | None:
+    def fetch_one(self, pk: str, request: HttpRequest | None = None) -> ModelWrapper | None:
         adapter = self.get_adapter()
         if adapter is None:
             return None
-        instance = self._adapter_get(adapter, self._resource_class, pk)
+        instance = self._adapter_get(adapter, self._resource_class, pk, request=request)
         if instance is None:
             return None
         return ModelWrapper(instance, self._fake_model._meta)
@@ -1075,11 +1716,21 @@ class GrpcResourceAdmin(BulkActionMixin, ModelAdmin):
         resource_class: type[BaseGrpcResource],
         pk: str,
         method_name: str = "get",
+        request: HttpRequest | None = None,
     ) -> BaseGrpcResource | None:
         """Hook for adapter ``get()``; overridden by async admin."""
         method = getattr(adapter, method_name)
         if isinstance(adapter, BaseAsyncGrpcServiceAdapter):
+            if self._method_accepts_request(method):
+                return cast(
+                    BaseGrpcResource | None, run_async(method(resource_class, pk, request=request))
+                )
             return cast(BaseGrpcResource | None, run_async(method(resource_class, pk)))
+        if self._method_accepts_request(method):
+            try:
+                return cast(BaseGrpcResource | None, method(resource_class, pk=pk, request=request))
+            except TypeError:
+                return cast(BaseGrpcResource | None, method(resource_class, pk, request=request))
         try:
             return cast(BaseGrpcResource | None, method(resource_class, pk=pk))
         except TypeError:
@@ -1090,10 +1741,20 @@ class GrpcResourceAdmin(BulkActionMixin, ModelAdmin):
         adapter: BaseGrpcServiceAdapter | BaseAsyncGrpcServiceAdapter,
         resource_class: type[BaseGrpcResource],
         pks: list[Any],
+        request: HttpRequest | None = None,
     ) -> dict[Any, Any]:
         """Hook for adapter ``batch_get()``; handles async adapters via ``run_async``."""
         if isinstance(adapter, BaseAsyncGrpcServiceAdapter):
+            if self._method_accepts_request(adapter.batch_get):
+                return cast(
+                    dict[Any, Any],
+                    run_async(adapter.batch_get(resource_class, pks, request=request)),
+                )
             return cast(dict[Any, Any], run_async(adapter.batch_get(resource_class, pks)))
+        if self._method_accepts_request(adapter.batch_get):
+            return cast(BaseGrpcServiceAdapter, adapter).batch_get(
+                resource_class, pks, request=request
+            )
         return cast(BaseGrpcServiceAdapter, adapter).batch_get(resource_class, pks)
 
     def _get_fk_adapter(
@@ -1108,34 +1769,6 @@ class GrpcResourceAdmin(BulkActionMixin, ModelAdmin):
         from django_admin_grpc.async_adapter import async_adapter_registry
 
         return async_adapter_registry.get_adapter(service)
-
-    def _adapter_create(
-        self,
-        adapter: BaseGrpcServiceAdapter | BaseAsyncGrpcServiceAdapter,
-        resource_class: type[BaseGrpcResource],
-        data: dict[str, Any],
-    ) -> BaseGrpcResource:
-        """Hook for adapter ``create()``; overridden by async admin."""
-        return cast(BaseGrpcServiceAdapter, adapter).create(resource_class, data)
-
-    def _adapter_update(
-        self,
-        adapter: BaseGrpcServiceAdapter | BaseAsyncGrpcServiceAdapter,
-        resource_class: type[BaseGrpcResource],
-        pk: str,
-        data: dict[str, Any],
-    ) -> BaseGrpcResource:
-        """Hook for adapter ``update()``; overridden by async admin."""
-        return cast(BaseGrpcServiceAdapter, adapter).update(resource_class, pk, data)
-
-    def _adapter_delete(
-        self,
-        adapter: BaseGrpcServiceAdapter | BaseAsyncGrpcServiceAdapter,
-        resource_class: type[BaseGrpcResource],
-        pk: str,
-    ) -> bool:
-        """Hook for adapter ``delete()``; overridden by async admin."""
-        return cast(BaseGrpcServiceAdapter, adapter).delete(resource_class, pk)
 
     # ── FK display caching ─────────────────────────────────────────────────
 
@@ -1485,7 +2118,7 @@ class GrpcResourceAdmin(BulkActionMixin, ModelAdmin):
         object_id: str,
         from_field: str | None = None,
     ) -> ModelWrapper | None:
-        return self.fetch_one(str(object_id))
+        return self.fetch_one(str(object_id), request=request)
 
     # ── Views ──────────────────────────────────────────────────────────────
 
@@ -1680,6 +2313,16 @@ class GrpcResourceAdmin(BulkActionMixin, ModelAdmin):
             context,
         )
 
+    def _changelist_redirect(self, request: HttpRequest) -> HttpResponseRedirect:
+        """Redirect to the changelist, falling back to the request path on reversal errors."""
+        try:
+            url = reverse(
+                f"admin:{self._fake_model._meta.app_label}_{self._fake_model._meta.model_name}_changelist"
+            )
+        except NoReverseMatch:
+            url = request.headers.get("Referer") or request.path
+        return HttpResponseRedirect(url)
+
     def delete_view(
         self,
         request: HttpRequest,
@@ -1703,11 +2346,7 @@ class GrpcResourceAdmin(BulkActionMixin, ModelAdmin):
                 adapter = self.get_adapter()
                 if adapter is None:
                     messages.error(request, "gRPC adapter not available.")
-                    return HttpResponseRedirect(
-                        reverse(
-                            f"admin:{self._fake_model._meta.app_label}_{self._fake_model._meta.model_name}_changelist"
-                        )
-                    )
+                    return self._changelist_redirect(request)
                 deleted = self._adapter_delete(adapter, self._resource_class, str(obj.pk))
                 if deleted:
                     messages.success(
@@ -1726,11 +2365,7 @@ class GrpcResourceAdmin(BulkActionMixin, ModelAdmin):
             except Exception as exc:
                 logger.exception("Error deleting via gRPC: %s", exc)
                 messages.error(request, f"Error deleting: {exc}")
-            return HttpResponseRedirect(
-                reverse(
-                    f"admin:{self._fake_model._meta.app_label}_{self._fake_model._meta.model_name}_changelist"
-                )
-            )
+            return self._changelist_redirect(request)
 
         context = {
             **self.admin_site.each_context(request),
@@ -1857,74 +2492,6 @@ class AsyncGrpcResourceAdmin(GrpcResourceAdmin):
     def _is_async_adapter(self) -> bool:
         adapter = self.get_adapter()
         return isinstance(adapter, BaseAsyncGrpcServiceAdapter)
-
-    def _adapter_get(
-        self,
-        adapter: BaseGrpcServiceAdapter | BaseAsyncGrpcServiceAdapter,
-        resource_class: type[BaseGrpcResource],
-        pk: str,
-        method_name: str = "get",
-    ) -> BaseGrpcResource | None:
-        if isinstance(adapter, BaseAsyncGrpcServiceAdapter):
-            method = getattr(adapter, method_name)
-            return cast(BaseGrpcResource | None, run_async(method(resource_class, pk)))
-        return super()._adapter_get(adapter, resource_class, pk, method_name)
-
-    def _adapter_create(
-        self,
-        adapter: BaseGrpcServiceAdapter | BaseAsyncGrpcServiceAdapter,
-        resource_class: type[BaseGrpcResource],
-        data: dict[str, Any],
-    ) -> BaseGrpcResource:
-        if isinstance(adapter, BaseAsyncGrpcServiceAdapter):
-            return cast(BaseGrpcResource, run_async(adapter.create(resource_class, data)))
-        return super()._adapter_create(adapter, resource_class, data)
-
-    def _adapter_update(
-        self,
-        adapter: BaseGrpcServiceAdapter | BaseAsyncGrpcServiceAdapter,
-        resource_class: type[BaseGrpcResource],
-        pk: str,
-        data: dict[str, Any],
-    ) -> BaseGrpcResource:
-        if isinstance(adapter, BaseAsyncGrpcServiceAdapter):
-            return cast(BaseGrpcResource, run_async(adapter.update(resource_class, pk, data)))
-        return super()._adapter_update(adapter, resource_class, pk, data)
-
-    def _adapter_delete(
-        self,
-        adapter: BaseGrpcServiceAdapter | BaseAsyncGrpcServiceAdapter,
-        resource_class: type[BaseGrpcResource],
-        pk: str,
-    ) -> bool:
-        if isinstance(adapter, BaseAsyncGrpcServiceAdapter):
-            return cast(bool, run_async(adapter.delete(resource_class, pk)))
-        return super()._adapter_delete(adapter, resource_class, pk)
-
-    def fetch_list(
-        self,
-        page: int = 1,
-        page_size: int = 25,
-        filters: dict[str, Any] | None = None,
-    ) -> PagedResult | dict[str, Any]:
-        adapter = self.get_adapter()
-        if adapter is None:
-            logger.warning("No gRPC adapter available for service: %s", self.service_name)
-            return PagedResult(items=[])
-
-        kwargs: dict[str, Any] = {"filters": filters or {}}
-        if self.grpc_cursor_pagination:
-            kwargs["page_size"] = page_size
-        else:
-            kwargs["page"] = page
-            kwargs["page_size"] = page_size
-
-        if isinstance(adapter, BaseAsyncGrpcServiceAdapter):
-            return cast(
-                PagedResult | dict[str, Any],
-                run_async(adapter.list(resource_class=self._resource_class, **kwargs)),
-            )
-        return adapter.list(self._resource_class, **kwargs)
 
     async def async_changelist_view(
         self,

@@ -164,6 +164,7 @@ class FormBuilder:
             FKFieldConfig,
             FloatFieldConfig,
             IntegerFieldConfig,
+            JSONFieldConfig,
             TextFieldConfig,
         )
 
@@ -240,6 +241,14 @@ class FormBuilder:
             )
         if isinstance(config, FKFieldConfig):
             return cls._make_fk_field(config, widget)
+        if isinstance(config, JSONFieldConfig):
+            return forms.JSONField(
+                label=config.label,
+                required=config.required,
+                help_text=config.help_text,
+                initial=config.initial,
+                widget=widget or forms.Textarea(attrs={"rows": 4}),
+            )
         if isinstance(config, (DateTimeFieldConfig, DateFieldConfig)):
             return forms.CharField(
                 label=config.label,

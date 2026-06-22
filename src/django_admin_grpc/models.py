@@ -10,8 +10,10 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from django.apps import apps
 from django.core.exceptions import FieldDoesNotExist
+from django.db import models
 
 if TYPE_CHECKING:
+    from django_admin_grpc.audit import AuditEvent
     from django_admin_grpc.resources import BaseGrpcResource
 
 logger = logging.getLogger(__name__)
@@ -297,3 +299,46 @@ class ModelWrapper:
     def serializable_value(self, field_name: str) -> Any:
         """Called by admin list templates to retrieve a cell value."""
         return getattr(self._instance, field_name, None)
+
+
+class GrpcAuditLog(models.Model):
+    """Django model used by ``DjangoModelAuditBackend``."""
+
+    id = models.BigAutoField(primary_key=True)
+    resource_name = models.CharField(max_length=255, db_index=True)
+    operation = models.CharField(max_length=32, db_index=True)
+    pk_value = models.CharField(max_length=255, blank=True, db_index=True)
+    user = models.CharField(max_length=255, blank=True, db_index=True)
+    timestamp = models.DateTimeField(db_index=True)
+    before = models.JSONField(null=True, blank=True)
+    after = models.JSONField(null=True, blank=True)
+    diff = models.JSONField(null=True, blank=True)
+    success = models.BooleanField(default=True)
+    error = models.TextField(blank=True)
+    request_id = models.CharField(max_length=255, blank=True, db_index=True)
+    extra = models.JSONField(null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["resource_name", "timestamp"], name="grpcaudit_resource_ts_idx"),
+            models.Index(fields=["user", "timestamp"], name="grpcaudit_user_ts_idx"),
+            models.Index(fields=["operation", "timestamp"], name="grpcaudit_op_ts_idx"),
+        ]
+
+    def to_audit_event(self) -> AuditEvent:
+        from django_admin_grpc.audit import AuditEvent
+
+        return AuditEvent(
+            resource_name=self.resource_name,
+            operation=self.operation,
+            pk=self.pk_value or None,
+            user=self.user or None,
+            timestamp=self.timestamp,
+            before=self.before,
+            after=self.after,
+            diff=self.diff,
+            success=self.success,
+            error=self.error or None,
+            request_id=self.request_id or None,
+            extra=self.extra,
+        )

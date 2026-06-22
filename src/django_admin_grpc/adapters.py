@@ -7,6 +7,7 @@ Concrete adapters subclass ``BaseGrpcServiceAdapter`` and implement ``list()``,
 
 from __future__ import annotations
 
+import inspect
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
@@ -42,6 +43,39 @@ class BaseGrpcServiceAdapter(ABC):
     service_name: str = ""
     grpc_pool: GrpcChannelPool | None = None
     batch_size: int = 100
+    grpc_context_providers: list[Callable[[Any], dict[str, str]]] = []
+
+    def get_grpc_metadata(self, request: Any | None = None) -> list[tuple[str, str]]:
+        """
+        Build gRPC metadata from global and adapter-level context providers.
+
+        Global providers are read from the ``GRPC_ADMIN_CONTEXT_PROVIDERS``
+        setting. Adapter-level ``grpc_context_providers`` are appended after
+        and can override global keys.
+        """
+        from django_admin_grpc.settings import get_setting
+
+        metadata: dict[str, str] = {}
+
+        global_providers = get_setting("GRPC_ADMIN_CONTEXT_PROVIDERS") or []
+        providers: list[Callable[[Any], dict[str, str]]] = []
+        for provider in global_providers:
+            if isinstance(provider, str):
+                from django.utils.module_loading import import_string
+
+                providers.append(import_string(provider))
+            elif callable(provider):
+                providers.append(provider)
+
+        providers.extend(self.grpc_context_providers)
+
+        for provider in providers:
+            try:
+                metadata.update(provider(request) if request is not None else provider(None))
+            except Exception:
+                logger.exception("gRPC context provider failed")
+
+        return list(metadata.items())
 
     @contextmanager
     def get_channel(self) -> Any:
@@ -69,6 +103,7 @@ class BaseGrpcServiceAdapter(ABC):
         page: int = 1,
         page_size: int = 25,
         filters: dict[str, Any] | None = None,
+        request: Any | None = None,
     ) -> PagedResult:
         """
         Fetch a page of entities.
@@ -78,6 +113,7 @@ class BaseGrpcServiceAdapter(ABC):
             page: 1-indexed page number.
             page_size: Items per page.
             filters: Optional query/filter dictionary.
+            request: Optional Django request, useful for metadata propagation.
 
         Returns:
             A ``PagedResult`` containing items and pagination metadata.
@@ -89,6 +125,7 @@ class BaseGrpcServiceAdapter(ABC):
         self,
         resource_class: type[BaseGrpcResource],
         pk: str,
+        request: Any | None = None,
     ) -> BaseGrpcResource | None:
         """
         Fetch a single entity by primary key.
@@ -96,6 +133,7 @@ class BaseGrpcServiceAdapter(ABC):
         Args:
             resource_class: The resource class to instantiate.
             pk: Primary key value.
+            request: Optional Django request, useful for metadata propagation.
 
         Returns:
             A resource instance, or ``None`` if not found.
@@ -106,6 +144,7 @@ class BaseGrpcServiceAdapter(ABC):
         self,
         resource_class: type[BaseGrpcResource],
         pks: list[Any],  # type: ignore[valid-type]
+        request: Any | None = None,
     ) -> dict[Any, BaseGrpcResource | None]:
         """
         Fetch multiple entities by primary key in a batch.
@@ -117,19 +156,24 @@ class BaseGrpcServiceAdapter(ABC):
         Args:
             resource_class: The resource class to instantiate.
             pks: Primary key values to fetch.
+            request: Optional Django request, useful for metadata propagation.
 
         Returns:
             A mapping of PK to resource instance (or ``None`` if not found).
         """
         result: dict[Any, BaseGrpcResource | None] = {}
         for pk in pks:  # type: ignore[attr-defined]
-            result[pk] = self.get(resource_class, str(pk))
+            if self._method_accepts_request(self.get):
+                result[pk] = self.get(resource_class, str(pk), request=request)
+            else:
+                result[pk] = self.get(resource_class, str(pk))
         return result
 
     def create(
         self,
         resource_class: type[BaseGrpcResource],
         data: dict[str, Any],
+        request: Any | None = None,
     ) -> BaseGrpcResource:
         """Create a new entity via gRPC."""
         raise NotImplementedError(f"{self.__class__.__name__} does not support create")
@@ -139,6 +183,7 @@ class BaseGrpcServiceAdapter(ABC):
         resource_class: type[BaseGrpcResource],
         pk: str,
         data: dict[str, Any],
+        request: Any | None = None,
     ) -> BaseGrpcResource:
         """Update an existing entity via gRPC."""
         raise NotImplementedError(f"{self.__class__.__name__} does not support update")
@@ -147,6 +192,7 @@ class BaseGrpcServiceAdapter(ABC):
         self,
         resource_class: type[BaseGrpcResource],
         pk: str,
+        request: Any | None = None,
     ) -> bool:
         """Delete an entity via gRPC."""
         raise NotImplementedError(f"{self.__class__.__name__} does not support delete")
@@ -159,6 +205,7 @@ class BaseGrpcServiceAdapter(ABC):
         items: list[dict[str, Any]],  # type: ignore[valid-type]
         *,
         batch_size: int | None = None,
+        request: Any | None = None,
     ) -> list[BaseGrpcResource]:  # type: ignore[valid-type]
         """
         Create multiple entities via gRPC, chunked.
@@ -175,6 +222,7 @@ class BaseGrpcServiceAdapter(ABC):
             resource_class: Resource class to instantiate for created items.
             items: List of dictionaries, one per entity to create.
             batch_size: Optional chunk size override.
+            request: Optional Django request, useful for metadata propagation.
 
         Returns:
             A list of created resources (one per successfully created item,
@@ -197,7 +245,10 @@ class BaseGrpcServiceAdapter(ABC):
                 # Stable key: the index of the input across all chunks.
                 index = len(succeeded_inputs) + len(failed)
                 try:
-                    created.append(self.create(resource_class, data))
+                    if self._method_accepts_request(self.create):
+                        created.append(self.create(resource_class, data, request=request))
+                    else:
+                        created.append(self.create(resource_class, data))
                     succeeded_inputs.append(data)
                 except Exception as exc:
                     failed[index] = exc
@@ -222,6 +273,7 @@ class BaseGrpcServiceAdapter(ABC):
         items: list[dict[str, Any]],  # type: ignore[valid-type]
         *,
         batch_size: int | None = None,
+        request: Any | None = None,
     ) -> list[BaseGrpcResource]:  # type: ignore[valid-type]
         """
         Update multiple entities via gRPC, chunked.
@@ -240,6 +292,7 @@ class BaseGrpcServiceAdapter(ABC):
             items: List of dictionaries, each including the PK field plus
                 the fields to update.
             batch_size: Optional chunk size override.
+            request: Optional Django request, useful for metadata propagation.
 
         Returns:
             A list of updated resources (one per successful update, in
@@ -271,7 +324,10 @@ class BaseGrpcServiceAdapter(ABC):
                     )
                     continue
                 try:
-                    updated.append(self.update(resource_class, str(pk), data))
+                    if self._method_accepts_request(self.update):
+                        updated.append(self.update(resource_class, str(pk), data, request=request))
+                    else:
+                        updated.append(self.update(resource_class, str(pk), data))
                     succeeded_pks.append(pk)
                 except Exception as exc:
                     failed[pk] = exc
@@ -296,12 +352,13 @@ class BaseGrpcServiceAdapter(ABC):
         pks: list[Any],  # type: ignore[valid-type]
         *,
         batch_size: int | None = None,
+        request: Any | None = None,
     ) -> dict[str, Any]:
         """
         Delete multiple entities by primary key, chunked.
 
         The default implementation calls ``delete()`` per PK in chunks. On
-        partial failure, raises :class:`GrpcBatchPartialError` and includes
+        partial failure, raises :class:`GrpcBatchPartialError} and includes
         the succeeded and failed PKs. On full success, returns a summary
         mapping of the form ``{"deleted": int, "failed": list[Any]}`` where
         ``failed`` is an empty list.
@@ -310,6 +367,7 @@ class BaseGrpcServiceAdapter(ABC):
             resource_class: Resource class describing the entity shape.
             pks: List of primary key values to delete.
             batch_size: Optional chunk size override.
+            request: Optional Django request, useful for metadata propagation.
 
         Returns:
             ``{"deleted": <int>, "failed": [<pk>, ...]}`` on full success.
@@ -331,7 +389,10 @@ class BaseGrpcServiceAdapter(ABC):
             pk: Any
             for pk in chunk:
                 try:
-                    self.delete(resource_class, str(pk))
+                    if self._method_accepts_request(self.delete):
+                        self.delete(resource_class, str(pk), request=request)
+                    else:
+                        self.delete(resource_class, str(pk))
                     succeeded_pks.append(pk)
                 except Exception as exc:
                     failed[pk] = exc
@@ -426,6 +487,15 @@ class BaseGrpcServiceAdapter(ABC):
         from django.utils.module_loading import import_string
 
         return cast(Callable[[], dict[str, str]], import_string(provider))
+
+    @staticmethod
+    def _method_accepts_request(method: Callable[..., Any]) -> bool:
+        """Return ``True`` if *method* has a ``request`` parameter."""
+        try:
+            sig = inspect.signature(method)
+            return "request" in sig.parameters
+        except (TypeError, ValueError):
+            return False
 
     @staticmethod
     def _map_rpc_error(exc: grpc.RpcError) -> Exception:
