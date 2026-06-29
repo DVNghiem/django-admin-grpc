@@ -150,4 +150,4 @@ class ProtoFieldInspector:
     def _is_message_or_repeated(field: Any) -> bool:
         if getattr(field, "is_repeated", False):
             return True
-        return field.type == 11  # TYPE_MESSAGE
+        return bool(field.type == 11)  # TYPE_MESSAGE

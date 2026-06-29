@@ -13,7 +13,7 @@ import json
 import logging
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from django.utils.module_loading import import_string
 
@@ -186,5 +186,5 @@ def load_audit_backend(value: Any | None = None) -> BaseAuditBackend:
         return value()
     if isinstance(value, str):
         backend_class = import_string(value)
-        return backend_class()
+        return cast(BaseAuditBackend, backend_class())
     raise ValueError(f"Invalid audit backend configuration: {value!r}")

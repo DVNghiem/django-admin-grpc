@@ -191,9 +191,9 @@ class ExportMixin:
 
     def has_export_permission(self, request: HttpRequest) -> bool:
         """Return ``True`` if the user may export records."""
-        return self.has_view_permission(request)
+        return cast(bool, self.has_view_permission(request))
 
-    def export_as_csv(self, request: HttpRequest, queryset: Any) -> HttpResponse:
+    def export_as_csv(self, request: HttpRequest, queryset: Any) -> StreamingHttpResponse:
         """Export the current filtered result set as a UTF-8 CSV file."""
         if not self.has_export_permission(request):
             return HttpResponseForbidden("Export not allowed.")
@@ -256,12 +256,12 @@ class ExportMixin:
     def _get_export_fields(self, request: HttpRequest) -> list[str]:
         if self.export_fields:
             return list(self.export_fields)
-        display = self.get_list_display(request)
+        display = cast(Callable[[HttpRequest], list[str]], self.get_list_display)(request)
         # ``get_list_display`` may return the action checkbox pseudo-field.
         return [f for f in display if isinstance(f, str) and f != "action_checkbox"]
 
     def _get_export_header(self, field_name: str) -> str:
-        config = self._resource_class.get_field_config(field_name)
+        config = cast(Callable[[str], Any], self._resource_class.get_field_config)(field_name)
         if config is not None:
             return str(config.label or config.name)
         return field_name.replace("_", " ").title()
@@ -278,14 +278,15 @@ class ExportMixin:
 
     def _export_filename(self, extension: str) -> str:
         prefix = self.export_filename_prefix
+        fake_model = cast(Any, getattr(self, "_fake_model", None))
         model_name = (
-            getattr(self, "_fake_model", None) and self._fake_model._meta.model_name or "export"
+            fake_model and fake_model._meta.model_name or "export"
         )
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         return f"{prefix}{model_name}_{timestamp}.{extension}"
 
     def _fetch_all_for_export(self, request: HttpRequest) -> list[Any]:
-        filters = self.get_grpc_filters(request)
+        filters = cast(Callable[[HttpRequest], dict[str, Any]], self.get_grpc_filters)(request)
         search_query = request.GET.get("q", "")
         if search_query:
             filters["search"] = search_query
@@ -297,7 +298,10 @@ class ExportMixin:
         page = 1
 
         while len(rows) < max_rows:
-            result = self.fetch_list(
+            result = cast(
+                Callable[..., PagedResult | dict[str, Any]],
+                self.fetch_list,
+            )(
                 page=page,
                 page_size=page_size,
                 filters=filters,
@@ -370,7 +374,7 @@ class AuditMixin:
         from contextlib import contextmanager
 
         @contextmanager
-        def _cm():
+        def _cm() -> Any:
             self._set_audit_request(request)
             try:
                 yield
@@ -384,7 +388,7 @@ class AuditMixin:
         cache_attr = "_audit_backend_instance"
         backend = getattr(self, cache_attr, None)
         if backend is not None:
-            return backend
+            return cast(BaseAuditBackend, backend)
 
         configured = self.audit_backend
         if configured is None:
@@ -404,7 +408,7 @@ class AuditMixin:
         if user is None:
             return None
         if hasattr(user, "get_username"):
-            username = user.get_username()
+            username: str | None = cast(Any, user).get_username()
             if username:
                 return username
             return None
@@ -414,7 +418,7 @@ class AuditMixin:
     def _audit_request_id(self, request: HttpRequest | None) -> str | None:
         if request is None:
             return None
-        rid = getattr(request, "_grpc_request_id", None)
+        rid: str | None = getattr(request, "_grpc_request_id", None)
         if rid:
             return rid
         return request.META.get("HTTP_X_REQUEST_ID") or str(uuid.uuid4())
@@ -457,8 +461,9 @@ class AuditMixin:
         if not self.audit_enabled:
             return
         request = self._get_audit_request()
+        resource_class = cast(type[BaseGrpcResource], getattr(self, "_resource_class", None))
         event = AuditEvent(
-            resource_name=getattr(self._resource_class, "__name__", str(self._resource_class)),
+            resource_name=getattr(resource_class, "__name__", str(resource_class)),
             operation=operation,
             pk=pk,
             user=self._audit_user(request),
@@ -491,7 +496,7 @@ class AuditMixin:
             if inspect.iscoroutinefunction(method):
                 before_obj = run_async(before_obj)
             if before_obj is not None and hasattr(before_obj, "to_dict"):
-                return before_obj.to_dict()
+                return cast(dict[str, Any], before_obj.to_dict())
             return None
         except Exception:
             return None
@@ -649,7 +654,10 @@ class AuditMixin:
         extra_context: dict[str, Any] | None = None,
     ) -> TemplateResponse | HttpResponseRedirect:
         with self._audit_request_context(request):
-            return super().add_view(request, form_url, extra_context)  # type: ignore[misc]
+            return cast(
+                TemplateResponse | HttpResponseRedirect,
+                super().add_view(request, form_url, extra_context),  # type: ignore[misc]
+            )
 
     def change_view(
         self,
@@ -659,7 +667,10 @@ class AuditMixin:
         extra_context: dict[str, Any] | None = None,
     ) -> TemplateResponse | HttpResponseRedirect:
         with self._audit_request_context(request):
-            return super().change_view(request, object_id, form_url, extra_context)  # type: ignore[misc]
+            return cast(
+                TemplateResponse | HttpResponseRedirect,
+                super().change_view(request, object_id, form_url, extra_context),  # type: ignore[misc]
+            )
 
     def delete_view(
         self,
@@ -668,7 +679,10 @@ class AuditMixin:
         extra_context: dict[str, Any] | None = None,
     ) -> TemplateResponse | HttpResponseRedirect:
         with self._audit_request_context(request):
-            return super().delete_view(request, object_id, extra_context)  # type: ignore[misc]
+            return cast(
+                TemplateResponse | HttpResponseRedirect,
+                super().delete_view(request, object_id, extra_context),  # type: ignore[misc]
+            )
 
     def apply_grpc_bulk_update(
         self,
@@ -677,7 +691,10 @@ class AuditMixin:
         data: dict[str, Any],
     ) -> tuple[int, int]:
         with self._audit_request_context(request):
-            return super().apply_grpc_bulk_update(request, queryset, data)  # type: ignore[misc]
+            return cast(
+                tuple[int, int],
+                super().apply_grpc_bulk_update(request, queryset, data),  # type: ignore[misc]
+            )
 
     def apply_grpc_bulk_delete(
         self,
@@ -685,7 +702,10 @@ class AuditMixin:
         queryset: Any,
     ) -> dict[str, Any] | None:
         with self._audit_request_context(request):
-            return super().apply_grpc_bulk_delete(request, queryset)  # type: ignore[misc]
+            return cast(
+                dict[str, Any] | None,
+                super().apply_grpc_bulk_delete(request, queryset),  # type: ignore[misc]
+            )
 
     def bulk_create_action(self, request: HttpRequest, queryset: Any) -> None:
         with self._audit_request_context(request):
@@ -766,7 +786,7 @@ class BulkActionMixin:
                     ),
                 )
             else:
-                if self._method_accepts_request(adapter.bulk_create):
+                if cast(Callable[..., bool], self._method_accepts_request)(adapter.bulk_create):
                     created = adapter.bulk_create(self._resource_class, items, request=request)  # type: ignore[attr-defined]
                 else:
                     created = adapter.bulk_create(self._resource_class, items)  # type: ignore[attr-defined]
@@ -776,7 +796,7 @@ class BulkActionMixin:
                 f"Created {len(exc.succeeded)} of {len(items)} record(s); "
                 f"{len(exc.failed)} failed.",
             )
-            self._log_audit_event(
+            cast(Callable[..., None], self._log_audit_event)(
                 operation="bulk_create",
                 pk=None,
                 before=None,
@@ -786,7 +806,7 @@ class BulkActionMixin:
             )
             return
         messages.success(request, f"Created {len(created)} record(s).")
-        self._log_audit_event(
+        cast(Callable[..., None], self._log_audit_event)(
             operation="bulk_create",
             pk=None,
             before=None,
@@ -806,7 +826,7 @@ class BulkActionMixin:
             messages.error(request, "gRPC adapter not available.")
             return
         selected_pks = self.get_grpc_selected_pks(request, queryset)  # type: ignore[attr-defined]
-        before = self._audit_fetch_before_list(adapter, self._resource_class, selected_pks)
+        before = cast(Callable[..., list[dict[str, Any]]], self._audit_fetch_before_list)(adapter, self._resource_class, selected_pks)
         updated: list[BaseGrpcResource] = []
         try:
             if isinstance(adapter, BaseAsyncGrpcServiceAdapter):
@@ -818,7 +838,7 @@ class BulkActionMixin:
                     ),
                 )
             else:
-                if self._method_accepts_request(adapter.bulk_update):
+                if cast(Callable[..., bool], self._method_accepts_request)(adapter.bulk_update):
                     updated = adapter.bulk_update(self._resource_class, items, request=request)  # type: ignore[attr-defined]
                 else:
                     updated = adapter.bulk_update(self._resource_class, items)  # type: ignore[attr-defined]
@@ -828,7 +848,7 @@ class BulkActionMixin:
                 f"Updated {len(exc.succeeded)} of {len(items)} record(s); "
                 f"{len(exc.failed)} failed.",
             )
-            self._log_audit_event(
+            cast(Callable[..., None], self._log_audit_event)(
                 operation="bulk_update",
                 pk=None,
                 before=before or None,
@@ -838,7 +858,7 @@ class BulkActionMixin:
             )
             return
         messages.success(request, f"Updated {len(updated)} record(s).")
-        self._log_audit_event(
+        cast(Callable[..., None], self._log_audit_event)(
             operation="bulk_update",
             pk=None,
             before=before or None,
@@ -934,7 +954,7 @@ class BulkActionMixin:
                 )
             except GrpcBatchPartialError as exc:
                 self._report_bulk_delete_failure(request, exc)
-                self._log_audit_event(
+                cast(Callable[..., None], self._log_audit_event)(
                     operation="bulk_delete",
                     pk=None,
                     before=before or None,
@@ -945,7 +965,7 @@ class BulkActionMixin:
                 return None
         else:
             try:
-                if self._method_accepts_request(adapter.bulk_delete):
+                if cast(Callable[..., bool], self._method_accepts_request)(adapter.bulk_delete):
                     result = adapter.bulk_delete(
                         self._resource_class, selected_pks, request=request
                     )  # type: ignore[attr-defined]
@@ -953,7 +973,7 @@ class BulkActionMixin:
                     result = adapter.bulk_delete(self._resource_class, selected_pks)  # type: ignore[attr-defined]
             except GrpcBatchPartialError as exc:
                 self._report_bulk_delete_failure(request, exc)
-                self._log_audit_event(
+                cast(Callable[..., None], self._log_audit_event)(
                     operation="bulk_delete",
                     pk=None,
                     before=before or None,
@@ -972,7 +992,7 @@ class BulkActionMixin:
                 request,
                 f"Successfully deleted {deleted_count} record(s).",
             )
-        self._log_audit_event(
+        cast(Callable[..., None], self._log_audit_event)(
             operation="bulk_delete",
             pk=None,
             before=before or None,
