@@ -189,11 +189,33 @@ class ExportMixin:
     export_max_rows: int = 10000
     export_filename_prefix: str = ""
 
+    # --- Abstract stubs for methods provided by sibling mixins/base classes ---
+    _fake_model: Any
+    _resource_class: type[BaseGrpcResource]
+
+    def has_view_permission(self, request: HttpRequest, obj: Any = None) -> bool:  # type: ignore[empty-body]
+        """Provided by ``ModelAdmin`` — stub for mypy."""
+        ...
+
+    def get_grpc_filters(self, request: HttpRequest) -> dict[str, Any]:  # type: ignore[empty-body]
+        """Provided by ``GrpcResourceAdmin`` — stub for mypy."""
+        ...
+
+    def fetch_list(
+        self,
+        page: int = 1,
+        page_size: int = 25,
+        filters: dict[str, Any] | None = None,
+        request: HttpRequest | None = None,
+    ) -> PagedResult | dict[str, Any]:
+        """Provided by ``GrpcResourceAdmin`` — stub for mypy."""
+        raise NotImplementedError
+
     def has_export_permission(self, request: HttpRequest) -> bool:
         """Return ``True`` if the user may export records."""
-        return cast(bool, self.has_view_permission(request))
+        return self.has_view_permission(request)
 
-    def export_as_csv(self, request: HttpRequest, queryset: Any) -> StreamingHttpResponse:
+    def export_as_csv(self, request: HttpRequest, queryset: Any) -> StreamingHttpResponse | HttpResponseForbidden:
         """Export the current filtered result set as a UTF-8 CSV file."""
         if not self.has_export_permission(request):
             return HttpResponseForbidden("Export not allowed.")
@@ -256,12 +278,12 @@ class ExportMixin:
     def _get_export_fields(self, request: HttpRequest) -> list[str]:
         if self.export_fields:
             return list(self.export_fields)
-        display = cast(Callable[[HttpRequest], list[str]], self.get_list_display)(request)
+        display = self.get_list_display(request)  # type: ignore[attr-defined]
         # ``get_list_display`` may return the action checkbox pseudo-field.
         return [f for f in display if isinstance(f, str) and f != "action_checkbox"]
 
     def _get_export_header(self, field_name: str) -> str:
-        config = cast(Callable[[str], Any], self._resource_class.get_field_config)(field_name)
+        config = self._resource_class.get_field_config(field_name)
         if config is not None:
             return str(config.label or config.name)
         return field_name.replace("_", " ").title()
@@ -278,15 +300,14 @@ class ExportMixin:
 
     def _export_filename(self, extension: str) -> str:
         prefix = self.export_filename_prefix
-        fake_model = cast(Any, getattr(self, "_fake_model", None))
         model_name = (
-            fake_model and fake_model._meta.model_name or "export"
+            self._fake_model._meta.model_name or "export"
         )
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         return f"{prefix}{model_name}_{timestamp}.{extension}"
 
     def _fetch_all_for_export(self, request: HttpRequest) -> list[Any]:
-        filters = cast(Callable[[HttpRequest], dict[str, Any]], self.get_grpc_filters)(request)
+        filters = self.get_grpc_filters(request)
         search_query = request.GET.get("q", "")
         if search_query:
             filters["search"] = search_query
@@ -298,10 +319,7 @@ class ExportMixin:
         page = 1
 
         while len(rows) < max_rows:
-            result = cast(
-                Callable[..., PagedResult | dict[str, Any]],
-                self.fetch_list,
-            )(
+            result = self.fetch_list(
                 page=page,
                 page_size=page_size,
                 filters=filters,
@@ -748,6 +766,53 @@ class BulkActionMixin:
     # helper methods below can reference it.
     _resource_class: type[BaseGrpcResource]  # type: ignore[assignment]
 
+    # --- Abstract stubs for methods provided by sibling mixins ---
+
+    @staticmethod
+    def _method_accepts_request(method: Callable[..., Any]) -> bool:  # type: ignore[empty-body]
+        """Provided by ``AuditMixin`` — stub for mypy."""
+        ...
+
+    def _log_audit_event(
+        self,
+        *,
+        operation: str,
+        pk: Any,
+        before: Any,
+        after: Any,
+        success: bool,
+        error: str | None,
+    ) -> None:  # type: ignore[empty-body]
+        """Provided by ``AuditMixin`` — stub for mypy."""
+        ...
+
+    def _audit_fetch_before_list(
+        self,
+        adapter: Any,
+        resource_class: type[BaseGrpcResource],
+        pks: list[Any],
+    ) -> list[dict[str, Any]]:
+        """Provided by ``AuditMixin`` — stub for mypy."""
+        raise NotImplementedError
+
+    def get_adapter(self) -> BaseGrpcServiceAdapter | BaseAsyncGrpcServiceAdapter | None:  # type: ignore[empty-body]
+        """Provided by ``GrpcResourceAdmin`` — stub for mypy."""
+        ...
+
+    def get_grpc_selected_pks(self, request: HttpRequest, queryset: Any) -> list[Any]:  # type: ignore[empty-body]
+        """Provided by ``GrpcResourceAdmin`` — stub for mypy."""
+        ...
+
+    def _adapter_update(
+        self,
+        adapter: BaseGrpcServiceAdapter | BaseAsyncGrpcServiceAdapter,
+        resource_class: type[BaseGrpcResource],
+        pk: str,
+        data: dict[str, Any],
+    ) -> BaseGrpcResource:
+        """Provided by ``GrpcResourceAdmin`` — stub for mypy."""
+        raise NotImplementedError
+
     # ── Action wrappers (named so Django's get_actions can discover them) ──
 
     def bulk_delete_action(self, request: HttpRequest, queryset: Any) -> None:
@@ -771,7 +836,7 @@ class BulkActionMixin:
         adapter.
         """
         items = list(self.build_bulk_create_payload(request, queryset))
-        adapter = self.get_adapter()  # type: ignore[attr-defined]
+        adapter = self.get_adapter()
         if adapter is None:
             messages.error(request, "gRPC adapter not available.")
             return
@@ -782,21 +847,21 @@ class BulkActionMixin:
                 created = cast(
                     list[BaseGrpcResource],
                     run_async(
-                        adapter.bulk_create(self._resource_class, items, request=request)  # type: ignore[attr-defined]
+                        adapter.bulk_create(self._resource_class, items, request=request)
                     ),
                 )
             else:
-                if cast(Callable[..., bool], self._method_accepts_request)(adapter.bulk_create):
-                    created = adapter.bulk_create(self._resource_class, items, request=request)  # type: ignore[attr-defined]
+                if self._method_accepts_request(adapter.bulk_create):
+                    created = adapter.bulk_create(self._resource_class, items, request=request)
                 else:
-                    created = adapter.bulk_create(self._resource_class, items)  # type: ignore[attr-defined]
+                    created = adapter.bulk_create(self._resource_class, items)
         except GrpcBatchPartialError as exc:
             messages.warning(
                 request,
                 f"Created {len(exc.succeeded)} of {len(items)} record(s); "
                 f"{len(exc.failed)} failed.",
             )
-            cast(Callable[..., None], self._log_audit_event)(
+            self._log_audit_event(
                 operation="bulk_create",
                 pk=None,
                 before=None,
@@ -806,7 +871,7 @@ class BulkActionMixin:
             )
             return
         messages.success(request, f"Created {len(created)} record(s).")
-        cast(Callable[..., None], self._log_audit_event)(
+        self._log_audit_event(
             operation="bulk_create",
             pk=None,
             before=None,
@@ -821,12 +886,12 @@ class BulkActionMixin:
         shared payload built by :meth:`build_bulk_update_payload`.
         """
         items = list(self.build_bulk_update_payload(request, queryset))
-        adapter = self.get_adapter()  # type: ignore[attr-defined]
+        adapter = self.get_adapter()
         if adapter is None:
             messages.error(request, "gRPC adapter not available.")
             return
-        selected_pks = self.get_grpc_selected_pks(request, queryset)  # type: ignore[attr-defined]
-        before = cast(Callable[..., list[dict[str, Any]]], self._audit_fetch_before_list)(adapter, self._resource_class, selected_pks)
+        selected_pks = self.get_grpc_selected_pks(request, queryset)
+        before = self._audit_fetch_before_list(adapter, self._resource_class, selected_pks)
         updated: list[BaseGrpcResource] = []
         try:
             if isinstance(adapter, BaseAsyncGrpcServiceAdapter):
@@ -834,21 +899,21 @@ class BulkActionMixin:
                 updated = cast(
                     list[BaseGrpcResource],
                     run_async(
-                        adapter.bulk_update(self._resource_class, items, request=request)  # type: ignore[attr-defined]
+                        adapter.bulk_update(self._resource_class, items, request=request)
                     ),
                 )
             else:
-                if cast(Callable[..., bool], self._method_accepts_request)(adapter.bulk_update):
-                    updated = adapter.bulk_update(self._resource_class, items, request=request)  # type: ignore[attr-defined]
+                if self._method_accepts_request(adapter.bulk_update):
+                    updated = adapter.bulk_update(self._resource_class, items, request=request)
                 else:
-                    updated = adapter.bulk_update(self._resource_class, items)  # type: ignore[attr-defined]
+                    updated = adapter.bulk_update(self._resource_class, items)
         except GrpcBatchPartialError as exc:
             messages.warning(
                 request,
                 f"Updated {len(exc.succeeded)} of {len(items)} record(s); "
                 f"{len(exc.failed)} failed.",
             )
-            cast(Callable[..., None], self._log_audit_event)(
+            self._log_audit_event(
                 operation="bulk_update",
                 pk=None,
                 before=before or None,
@@ -858,7 +923,7 @@ class BulkActionMixin:
             )
             return
         messages.success(request, f"Updated {len(updated)} record(s).")
-        cast(Callable[..., None], self._log_audit_event)(
+        self._log_audit_event(
             operation="bulk_update",
             pk=None,
             before=before or None,
@@ -890,7 +955,7 @@ class BulkActionMixin:
         Default: empty ``{}`` per selected PK.  Subclasses should override
         to attach the data they want each new record to start with.
         """
-        selected_pks = self.get_grpc_selected_pks(request, queryset)  # type: ignore[attr-defined]
+        selected_pks = self.get_grpc_selected_pks(request, queryset)
         return [{} for _ in selected_pks]
 
     def build_bulk_update_payload(
@@ -905,8 +970,8 @@ class BulkActionMixin:
         identify the row but no fields are changed.  Subclasses should
         override to attach the fields they want updated.
         """
-        selected_pks = self.get_grpc_selected_pks(request, queryset)  # type: ignore[attr-defined]
-        pk_field = self._resource_class.Meta.pk_field  # type: ignore[attr-defined]
+        selected_pks = self.get_grpc_selected_pks(request, queryset)
+        pk_field = self._resource_class.Meta.pk_field
         return [{pk_field: pk} for pk in selected_pks]
 
     # ── gRPC-aware bulk delete helper ────────────────────────────────────
@@ -927,7 +992,7 @@ class BulkActionMixin:
         and returns ``None``; the underlying :class:`GrpcBatchPartialError`
         is consumed internally and not re-raised.
         """
-        adapter = self.get_adapter()  # type: ignore[attr-defined]
+        adapter = self.get_adapter()
         if adapter is None:
             messages.error(request, "gRPC adapter not available.")
             return None
@@ -935,7 +1000,7 @@ class BulkActionMixin:
         if isinstance(queryset, (list, tuple)):
             selected_pks: list[Any] = list(queryset)
         else:
-            selected_pks = self.get_grpc_selected_pks(request, queryset)  # type: ignore[attr-defined]
+            selected_pks = self.get_grpc_selected_pks(request, queryset)
 
         if not selected_pks:
             return {"deleted": 0, "failed": []}
@@ -954,7 +1019,7 @@ class BulkActionMixin:
                 )
             except GrpcBatchPartialError as exc:
                 self._report_bulk_delete_failure(request, exc)
-                cast(Callable[..., None], self._log_audit_event)(
+                self._log_audit_event(
                     operation="bulk_delete",
                     pk=None,
                     before=before or None,
@@ -965,15 +1030,15 @@ class BulkActionMixin:
                 return None
         else:
             try:
-                if cast(Callable[..., bool], self._method_accepts_request)(adapter.bulk_delete):
+                if self._method_accepts_request(adapter.bulk_delete):
                     result = adapter.bulk_delete(
                         self._resource_class, selected_pks, request=request
-                    )  # type: ignore[attr-defined]
+                    )
                 else:
-                    result = adapter.bulk_delete(self._resource_class, selected_pks)  # type: ignore[attr-defined]
+                    result = adapter.bulk_delete(self._resource_class, selected_pks)
             except GrpcBatchPartialError as exc:
                 self._report_bulk_delete_failure(request, exc)
-                cast(Callable[..., None], self._log_audit_event)(
+                self._log_audit_event(
                     operation="bulk_delete",
                     pk=None,
                     before=before or None,
@@ -992,7 +1057,7 @@ class BulkActionMixin:
                 request,
                 f"Successfully deleted {deleted_count} record(s).",
             )
-        cast(Callable[..., None], self._log_audit_event)(
+        self._log_audit_event(
             operation="bulk_delete",
             pk=None,
             before=before or None,
@@ -1017,7 +1082,7 @@ class BulkActionMixin:
 
         Returns a ``(updated_count, error_count)`` tuple.
         """
-        adapter = self.get_adapter()  # type: ignore[attr-defined]
+        adapter = self.get_adapter()
         if adapter is None:
             messages.error(request, "gRPC adapter not available.")
             return 0, 0
@@ -1026,13 +1091,13 @@ class BulkActionMixin:
         if isinstance(queryset, (list, tuple)):
             selected_pks = list(queryset)
         else:
-            selected_pks = self.get_grpc_selected_pks(request, queryset)  # type: ignore[attr-defined]
+            selected_pks = self.get_grpc_selected_pks(request, queryset)
 
         updated = 0
         errors = 0
         for pk in selected_pks:
             try:
-                self._adapter_update(adapter, self._resource_class, pk, data)  # type: ignore[attr-defined]
+                self._adapter_update(adapter, self._resource_class, pk, data)
                 updated += 1
             except GrpcAdminError as exc:
                 logger.warning("gRPC bulk update failed for pk=%s: %s", pk, exc)
